@@ -108,6 +108,9 @@ const DOWNED_MAX_HEALTH = 100;
 const DOWNED_PROTECTION_TIME = 1.5;
 const DOWNED_DEATH_TIME = 30;
 const DOWNED_SPEED_MULT = 0.34;
+const SQUAD_FOLLOW_DISTANCE = 470;
+const SQUAD_TOO_FAR_DISTANCE = 820;
+const SQUAD_ROAM_SPREAD = 190;
 const EXTRACTION_BOT_COUNT = 99;
 const EXTRACTION_EXFIL_TIME = 6;
 const DEFAULT_BACKPACK = { label: "Sac leger", rarity: "common", capacity: 4, color: "#b8bec6", price: 80 };
@@ -880,6 +883,9 @@ function makeFighter(name, x, y, isPlayer = false, options = {}) {
     goalId: null,
     goalLastDistance: Infinity,
     goalStallTimer: 0,
+    squadRoamX: x,
+    squadRoamY: y,
+    squadRoamTimer: 0,
     ignoredGoalId: null,
     ignoredGoalTimer: 0,
     stormTick: 0,
@@ -2083,6 +2089,7 @@ function updateBots(dt) {
       ? bot.lastAttacker
       : null;
     const assistTarget = teamAssistTarget(bot);
+    const squadGoal = squadTravelGoal(bot);
     const canCloseFight = game.elapsed > BOT_CLOSE_FIGHT_GRACE;
     const closeThreat = bot.unstuckTimer > 0 || !canCloseFight ? null : findNearestOpponent(bot, 95);
     const canHunt = botCombatReady(bot) && game.elapsed > BOT_LOOT_PHASE_TIME;
@@ -2129,6 +2136,10 @@ function updateBots(dt) {
         bot.wanderX = loot.x;
         bot.wanderY = loot.y;
         setBotGoal(bot, `pickup:${loot.id}`, loot);
+      } else if (squadGoal) {
+        bot.wanderX = squadGoal.x;
+        bot.wanderY = squadGoal.y;
+        setBotGoal(bot, squadGoal.id, squadGoal);
       } else {
         bot.wanderX = clamp(bot.x + rand(-330, 330), 60, WORLD.width - 60);
         bot.wanderY = clamp(bot.y + rand(-250, 250), 60, WORLD.height - 60);
@@ -2288,6 +2299,69 @@ function teamAssistTarget(fighter, range = 1180) {
     }
   }
   return best;
+}
+
+function squadTravelGoal(bot) {
+  if (!bot.teamId || game.teamSize <= 1) return null;
+  const squad = standingTeamMembers(bot.teamId).filter((ally) => !ally.isPlayer || bot.isTeammate);
+  if (squad.length <= 1) return null;
+
+  const squadMates = squad.filter((ally) => ally !== bot);
+  const centerGroup = squadMates.length ? squadMates : squad;
+  const center = centerGroup.reduce((sum, ally) => ({ x: sum.x + ally.x, y: sum.y + ally.y }), { x: 0, y: 0 });
+  center.x /= centerGroup.length;
+  center.y /= centerGroup.length;
+  const distanceToSquad = Math.hypot(bot.x - center.x, bot.y - center.y);
+
+  if (distanceToSquad > SQUAD_TOO_FAR_DISTANCE) {
+    return {
+      id: `squad-regroup:${bot.teamId}`,
+      x: center.x,
+      y: center.y,
+    };
+  }
+
+  const leader = squad.slice().sort((a, b) => a.id.localeCompare(b.id))[0];
+  if (leader === bot && distanceToSquad < SQUAD_FOLLOW_DISTANCE) {
+    updateSquadRoamAnchor(bot, center);
+    return {
+      id: `squad-roam:${bot.teamId}:${Math.round(bot.squadRoamX)}:${Math.round(bot.squadRoamY)}`,
+      x: bot.squadRoamX,
+      y: bot.squadRoamY,
+    };
+  }
+
+  const leaderAnchor = leader || bot;
+  updateSquadRoamAnchor(leaderAnchor, center);
+  const index = Math.max(0, squad.findIndex((ally) => ally === bot));
+  const angle = (index / Math.max(1, squad.length)) * TAU + ((bot.id.length % 5) - 2) * 0.18;
+  const target = {
+    x: clamp(leaderAnchor.squadRoamX + Math.cos(angle) * SQUAD_ROAM_SPREAD, 60, WORLD.width - 60),
+    y: clamp(leaderAnchor.squadRoamY + Math.sin(angle) * SQUAD_ROAM_SPREAD, 60, WORLD.height - 60),
+  };
+
+  if (distanceToSquad > SQUAD_FOLLOW_DISTANCE) {
+    target.x = (target.x + center.x) / 2;
+    target.y = (target.y + center.y) / 2;
+  }
+
+  return {
+    id: `squad-roam:${bot.teamId}:${Math.round(leaderAnchor.squadRoamX)}:${Math.round(leaderAnchor.squadRoamY)}`,
+    ...target,
+  };
+}
+
+function updateSquadRoamAnchor(leader, center) {
+  leader.squadRoamTimer -= 1;
+  const tooClose = Math.hypot(leader.squadRoamX - center.x, leader.squadRoamY - center.y) < 180;
+  const reached = Math.hypot(leader.x - leader.squadRoamX, leader.y - leader.squadRoamY) < 180;
+  if (leader.squadRoamTimer > 0 && !tooClose && !reached) return;
+
+  const angle = rand(0, TAU);
+  const distanceFromSquad = rand(360, 720);
+  leader.squadRoamX = clamp(center.x + Math.cos(angle) * distanceFromSquad, 80, WORLD.width - 80);
+  leader.squadRoamY = clamp(center.y + Math.sin(angle) * distanceFromSquad, 80, WORLD.height - 80);
+  leader.squadRoamTimer = rand(90, 160);
 }
 
 function updateRevives(dt) {
