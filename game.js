@@ -847,6 +847,8 @@ function makeFighter(name, x, y, isPlayer = false, options = {}) {
     useHold: null,
     aggroTimer: 0,
     lastAttacker: null,
+    teamFightTarget: null,
+    teamFightTimer: 0,
     cooldown: 0,
     reload: 0,
     kills: 0,
@@ -2037,6 +2039,8 @@ function tickFighter(fighter, dt) {
   fighter.invuln = Math.max(0, fighter.invuln - dt);
   fighter.aggroTimer = Math.max(0, fighter.aggroTimer - dt);
   if (fighter.aggroTimer === 0) fighter.lastAttacker = null;
+  fighter.teamFightTimer = Math.max(0, fighter.teamFightTimer - dt);
+  if (fighter.teamFightTimer === 0) fighter.teamFightTarget = null;
 
   if (fighter.reload === 0 && fighter.pendingReload) {
     const weapon = getEquippedWeapon(fighter);
@@ -2078,19 +2082,24 @@ function updateBots(dt) {
     const defensiveTarget = bot.lastAttacker && bot.lastAttacker.alive && !bot.lastAttacker.downed && bot.aggroTimer > 0 && distance(bot, bot.lastAttacker) < 920
       ? bot.lastAttacker
       : null;
+    const assistTarget = teamAssistTarget(bot);
     const canCloseFight = game.elapsed > BOT_CLOSE_FIGHT_GRACE;
     const closeThreat = bot.unstuckTimer > 0 || !canCloseFight ? null : findNearestOpponent(bot, 95);
     const canHunt = botCombatReady(bot) && game.elapsed > BOT_LOOT_PHASE_TIME;
     const target = bot.unstuckTimer > 0
       ? null
-      : defensiveTarget || closeThreat || (canHunt ? findNearestOpponent(bot, 880) : null);
+      : defensiveTarget || closeThreat || assistTarget || (canHunt ? findNearestOpponent(bot, 880) : null);
     if (closeThreat) {
       bot.lastAttacker = closeThreat;
       bot.aggroTimer = Math.max(bot.aggroTimer, 2.4);
     }
+    if (assistTarget) {
+      bot.aiTimer = Math.min(bot.aiTimer, 0.18);
+      bot.aggroTimer = Math.max(bot.aggroTimer, 2.8);
+    }
     const outsideZone = !insideZone(bot);
 
-    if (downedAlly && !defensiveTarget) {
+    if (downedAlly && !defensiveTarget && !assistTarget) {
       bot.wanderX = downedAlly.x;
       bot.wanderY = downedAlly.y;
       setBotGoal(bot, `revive:${downedAlly.id}`, downedAlly);
@@ -2250,6 +2259,32 @@ function nearestDownedAlly(fighter, range = 900) {
     if (d < bestDistance) {
       best = ally;
       bestDistance = d;
+    }
+  }
+  return best;
+}
+
+function teamAssistTarget(fighter, range = 1180) {
+  if (!fighter.teamId || fighter.downed) return null;
+  let best = null;
+  let bestScore = Infinity;
+  for (const ally of standingTeamMembers(fighter.teamId)) {
+    if (ally === fighter) continue;
+    const allyDistance = distance(fighter, ally);
+    if (allyDistance > range) continue;
+    const candidates = [];
+    if (ally.lastAttacker && ally.aggroTimer > 0) candidates.push(ally.lastAttacker);
+    if (ally.teamFightTarget && ally.teamFightTimer > 0) candidates.push(ally.teamFightTarget);
+
+    for (const target of candidates) {
+      if (!target || !target.alive || target.downed || sameTeam(fighter, target)) continue;
+      const targetDistance = distance(fighter, target);
+      if (targetDistance > range + 520) continue;
+      const score = allyDistance + targetDistance * 0.45;
+      if (score < bestScore) {
+        best = target;
+        bestScore = score;
+      }
     }
   }
   return best;
@@ -3159,6 +3194,8 @@ function damageFighter(fighter, amount, source) {
     fighter.lastAttacker = source;
     fighter.aggroTimer = 6;
     fighter.buildPanicTimer = 2.4;
+    source.teamFightTarget = fighter;
+    source.teamFightTimer = 5.2;
   }
 
   let remaining = applyArmorMitigation(fighter, amount);
