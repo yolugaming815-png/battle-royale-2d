@@ -569,7 +569,7 @@ function itemIcon(item) {
 }
 
 function getActiveItem(fighter) {
-  if (fighter.isPlayer) return fighter.hotbar[fighter.activeSlot] || null;
+  if (fighter.hotbar) return fighter.hotbar[fighter.activeSlot] || null;
   return makeWeaponItem(fighter.weaponKey, fighter.mag, fighter.weaponRarity);
 }
 
@@ -595,12 +595,12 @@ function getEquippedWeaponRarity(fighter) {
 
 function getMagazine(fighter) {
   const item = getActiveWeaponItem(fighter);
-  if (fighter.isPlayer && item) return item.mag;
+  if (fighter.hotbar && item) return item.mag;
   return fighter.mag;
 }
 
 function setMagazine(fighter, value) {
-  if (fighter.isPlayer) {
+  if (fighter.hotbar) {
     const item = getActiveWeaponItem(fighter);
     if (item) item.mag = value;
   }
@@ -771,7 +771,7 @@ function tryBuildWall(player, options = {}) {
 }
 
 function syncEquippedFromHotbar(fighter) {
-  if (!fighter.isPlayer) return;
+  if (!fighter.hotbar) return;
   const item = getActiveWeaponItem(fighter);
   if (!item) return;
   fighter.weaponKey = item.type;
@@ -810,9 +810,7 @@ function resize() {
 function makeFighter(name, x, y, isPlayer = false, options = {}) {
   const weaponKey = "pickaxe";
   const weapon = WEAPONS[weaponKey];
-  const hotbar = isPlayer
-    ? [makeWeaponItem("pickaxe"), null, null, null]
-    : null;
+  const hotbar = [makeWeaponItem("pickaxe"), null, null, null];
   return {
     id: makeId(name),
     name,
@@ -2104,6 +2102,8 @@ function updateBots(dt) {
       bot.aiTimer = Math.min(bot.aiTimer, 0.18);
       bot.aggroTimer = Math.max(bot.aggroTimer, 2.8);
     }
+    const usingConsumable = botUseConsumableIfNeeded(bot, dt, target);
+    if (!usingConsumable) botSelectWeapon(bot, target);
     const outsideZone = !insideZone(bot);
 
     if (downedAlly && !defensiveTarget && !assistTarget) {
@@ -2166,7 +2166,10 @@ function updateBots(dt) {
       pathDestination = target;
       setBotGoal(bot, `target:${target.id}`, target);
 
-      if (targetDistance > preferredDistance) {
+      if (usingConsumable) {
+        speed *= 0.45;
+        moveAngle = targetDistance < 330 ? angleTo(target, bot) : moveAngle;
+      } else if (targetDistance > preferredDistance) {
         moveAngle = angleTo(bot, target);
       } else if (!weapon.melee && targetDistance < 160) {
         moveAngle = angleTo(target, bot);
@@ -2177,11 +2180,11 @@ function updateBots(dt) {
         moveAngle = angleTo(bot, target) + side * rand(0.65, 1.1);
       }
 
-      if (targetDistance < attackDistance && canSeeTarget) {
+      if (!usingConsumable && targetDistance < attackDistance && canSeeTarget) {
         tryShoot(bot, bot.aim);
       }
 
-      maybeBotBuild(bot, target, targetDistance, canSeeTarget, defensiveTarget);
+      if (!usingConsumable) maybeBotBuild(bot, target, targetDistance, canSeeTarget, defensiveTarget);
     } else {
       bot.aim = moveAngle;
     }
@@ -2192,7 +2195,7 @@ function updateBots(dt) {
       bot.aim = moveAngle + Math.sin(bot.scanAngle) * 1.15;
     }
 
-    if (!weapon.melee && bot.reload <= 0 && bot.mag <= Math.ceil(getWeaponMag(bot.weaponKey, bot.weaponRarity) * 0.28)) {
+    if (!usingConsumable && !weapon.melee && bot.reload <= 0 && getMagazine(bot) <= Math.ceil(getWeaponMag(getEquippedWeaponKey(bot), getEquippedWeaponRarity(bot)) * 0.28)) {
       startReload(bot);
     }
 
@@ -2651,8 +2654,138 @@ function weaponScore(type, rarity = "common") {
   return getWeaponDamage(type, rarity) + getWeaponMag(type, rarity) * 0.8 + rarityScore(rarity) * 18;
 }
 
+function hotbarItems(fighter) {
+  return fighter.hotbar || [];
+}
+
+function botWeaponSlots(bot) {
+  return hotbarItems(bot)
+    .map((item, slot) => ({ item, slot }))
+    .filter(({ item }) => item && item.kind === "weapon" && item.type !== "pickaxe");
+}
+
+function botConsumableSlots(bot, type = null) {
+  return hotbarItems(bot)
+    .map((item, slot) => ({ item, slot }))
+    .filter(({ item }) => item && item.kind === "consumable" && (!type || item.type === type));
+}
+
+function botWorstWeaponSlot(bot) {
+  let worst = null;
+  for (const entry of botWeaponSlots(bot)) {
+    const score = weaponScore(entry.item.type, entry.item.rarity);
+    if (!worst || score < worst.score) worst = { ...entry, score };
+  }
+  return worst;
+}
+
+function botWeaponSituationScore(item, targetDistance) {
+  if (!item || item.kind !== "weapon") return -Infinity;
+  if (item.type === "pickaxe") return targetDistance < 70 ? 18 : -80;
+
+  let score = weaponScore(item.type, item.rarity);
+  if (targetDistance < 120) {
+    if (item.type === "shotgun") score += 95;
+    if (item.type === "smg") score += 42;
+    if (item.type === "sniper") score -= 120;
+    if (item.type === "assault_rifle") score += 12;
+  } else if (targetDistance < 360) {
+    if (item.type === "smg") score += 58;
+    if (item.type === "assault_rifle") score += 44;
+    if (item.type === "pistol") score += 18;
+    if (item.type === "shotgun") score -= 20;
+    if (item.type === "sniper") score -= 34;
+  } else {
+    if (item.type === "sniper") score += 92;
+    if (item.type === "assault_rifle") score += 62;
+    if (item.type === "smg") score -= 34;
+    if (item.type === "shotgun") score -= 120;
+  }
+
+  if (item.mag <= 0) score -= 36;
+  return score;
+}
+
+function switchBotSlot(bot, slot) {
+  if (slot < 0 || slot >= HOTBAR_SIZE || bot.activeSlot === slot) return;
+  bot.activeSlot = slot;
+  bot.reload = 0;
+  bot.pendingReload = false;
+  bot.useHold = null;
+  syncEquippedFromHotbar(bot);
+}
+
+function botSelectWeapon(bot, target = null) {
+  const targetDistance = target ? distance(bot, target) : 340;
+  let bestSlot = 0;
+  let bestScore = botWeaponSituationScore(bot.hotbar[0], targetDistance);
+
+  for (const { item, slot } of botWeaponSlots(bot)) {
+    const score = botWeaponSituationScore(item, targetDistance);
+    if (score > bestScore) {
+      bestScore = score;
+      bestSlot = slot;
+    }
+  }
+
+  switchBotSlot(bot, bestSlot);
+}
+
+function botAddHotbarItem(bot, item, sourceX = bot.x, sourceY = bot.y) {
+  if (!item) return false;
+  const emptySlot = firstEmptyHotbarSlot(bot);
+  if (emptySlot !== -1) {
+    bot.hotbar[emptySlot] = item;
+    if (item.kind === "weapon") botSelectWeapon(bot);
+    return true;
+  }
+
+  if (item.kind === "weapon") {
+    const worst = botWorstWeaponSlot(bot);
+    const nextScore = weaponScore(item.type, item.rarity);
+    if (worst && nextScore > worst.score + 4) {
+      dropItemFromSlot(worst.item, sourceX, sourceY);
+      bot.hotbar[worst.slot] = item;
+      botSelectWeapon(bot);
+      return true;
+    }
+  }
+
+  if (bot.extractionBag.length < bot.backpack.capacity) {
+    bot.extractionBag.push(item);
+    return true;
+  }
+
+  return false;
+}
+
+function botUseConsumableIfNeeded(bot, dt, target) {
+  const targetDistance = target ? distance(bot, target) : Infinity;
+  const underPressure = target && targetDistance < 360 && hasLineOfSight(bot, target);
+  let slot = -1;
+
+  if (bot.health <= (underPressure ? 32 : 62)) {
+    const medkit = botConsumableSlots(bot, "medkit")[0];
+    if (medkit) slot = medkit.slot;
+  }
+
+  if (slot === -1 && bot.shield <= (underPressure ? 18 : 42)) {
+    const shield = botConsumableSlots(bot, "shield")[0];
+    if (shield) slot = shield.slot;
+  }
+
+  if (slot === -1) {
+    if (bot.useHold) updateConsumableUse(bot, dt, false);
+    return false;
+  }
+
+  switchBotSlot(bot, slot);
+  updateConsumableUse(bot, dt, true);
+  return true;
+}
+
 function botCombatReady(bot) {
-  return bot.weaponKey !== "pickaxe" && bot.shield >= 28;
+  return botWeaponSlots(bot).length > 0 && bot.shield >= 28;
 }
 
 function canPickup(fighter, pickup) {
@@ -2674,10 +2807,18 @@ function canPickup(fighter, pickup) {
   if (pickup.kind === "valuable") return fighter.extractionBag.length < fighter.backpack.capacity;
   if (pickup.kind === "backpack") return BACKPACKS[pickup.type].capacity > fighter.backpack.capacity;
   if (pickup.kind === "armor") return !fighter.armor[ARMORS[pickup.type].slot] || rarityScore(ARMORS[pickup.type].rarity) > rarityScore(fighter.armor[ARMORS[pickup.type].slot].rarity);
-  if (pickup.kind === "consumable" && pickup.type === "medkit") return fighter.health < fighter.maxHealth - 18;
-  if (pickup.kind === "consumable" && pickup.type === "shield") return fighter.shield < fighter.maxShield - 8;
+  if (pickup.kind === "consumable") {
+    const sameTypeCount = botConsumableSlots(fighter, pickup.type).length;
+    if (firstEmptyHotbarSlot(fighter) !== -1 && sameTypeCount < 2) return true;
+    if (fighter.extractionBag.length < fighter.backpack.capacity && sameTypeCount < 3) return true;
+    if (pickup.type === "medkit") return fighter.health < fighter.maxHealth - 18;
+    if (pickup.type === "shield") return fighter.shield < fighter.maxShield - 8;
+    return false;
+  }
   if (pickup.kind === "weapon" && pickup.type !== "pickaxe") {
-    return weaponScore(pickup.type, pickup.rarity) > weaponScore(fighter.weaponKey, fighter.weaponRarity) + 4;
+    if (firstEmptyHotbarSlot(fighter) !== -1) return true;
+    const worst = botWorstWeaponSlot(fighter);
+    return !worst || weaponScore(pickup.type, pickup.rarity) > worst.score + 4;
   }
 
   return false;
@@ -2685,16 +2826,24 @@ function canPickup(fighter, pickup) {
 
 function pickupPriorityForBot(bot, pickup) {
   if (pickup.kind === "weapon") {
-    if (bot.weaponKey === "pickaxe") return 420 + weaponScore(pickup.type, pickup.rarity);
-    return 140 + weaponScore(pickup.type, pickup.rarity) - weaponScore(bot.weaponKey, bot.weaponRarity);
+    if (botWeaponSlots(bot).length === 0) return 440 + weaponScore(pickup.type, pickup.rarity);
+    const worst = botWorstWeaponSlot(bot);
+    const upgrade = worst ? weaponScore(pickup.type, pickup.rarity) - worst.score : 0;
+    return firstEmptyHotbarSlot(bot) !== -1
+      ? 250 + weaponScore(pickup.type, pickup.rarity) * 0.45
+      : 145 + upgrade;
   }
 
   if (pickup.kind === "consumable" && pickup.type === "shield") {
-    return bot.shield < 28 ? 360 : 160;
+    return bot.shield < 28 ? 380 : 185 - botConsumableSlots(bot, "shield").length * 38;
   }
 
   if (pickup.kind === "consumable" && pickup.type === "medkit") {
-    return bot.health < 55 ? 330 : 90;
+    return bot.health < 55 ? 350 : 170 - botConsumableSlots(bot, "medkit").length * 36;
+  }
+
+  if (pickup.kind === "consumable" && pickup.type === "smoke_grenade") {
+    return 95 - botConsumableSlots(bot, "smoke_grenade").length * 42;
   }
 
   if (pickup.kind === "material") {
@@ -3403,7 +3552,7 @@ function wipeDownedTeamIfNeeded(teamId) {
 function dropLoot(fighter) {
   const drops = [];
 
-  if (fighter.isPlayer) {
+  if (fighter.hotbar) {
     for (const item of fighter.hotbar) {
       if (item && item.kind === "weapon" && item.type !== "pickaxe") drops.push(item);
       if (item && item.kind === "consumable") drops.push(item);
@@ -3687,12 +3836,8 @@ function finishExtractionPickup(player, pickup) {
 
 function finishBotPickup(bot, pickup) {
   if (!canPickup(bot, pickup)) return;
-  if (pickup.kind === "consumable" && pickup.type === "medkit") {
-    if (bot.health >= bot.maxHealth) return;
-    bot.health = Math.min(bot.maxHealth, bot.health + CONSUMABLES.medkit.amount);
-  } else if (pickup.kind === "consumable" && pickup.type === "shield") {
-    if (bot.shield >= bot.maxShield) return;
-    bot.shield = Math.min(bot.maxShield, bot.shield + CONSUMABLES.shield.amount);
+  if (pickup.kind === "consumable") {
+    if (!botAddHotbarItem(bot, makeConsumableItem(pickup.type), pickup.x, pickup.y)) return;
   } else if (pickup.kind === "ammo") {
     changeAmmo(bot, ammoTypeFromPickup(pickup.type), pickup.amount);
   } else if (pickup.kind === "material") {
@@ -3707,9 +3852,8 @@ function finishBotPickup(bot, pickup) {
     if (bot.extractionBag.length >= bot.backpack.capacity) return;
     bot.extractionBag.push(pickupToItem(pickup));
   } else if (pickup.kind === "weapon" && pickup.type !== "pickaxe") {
-    bot.weaponKey = pickup.type;
-    bot.weaponRarity = pickup.rarity;
-    bot.mag = pickup.mag ?? getWeaponMag(pickup.type, pickup.rarity);
+    const weaponItem = makeWeaponItem(pickup.type, pickup.mag, pickup.rarity);
+    if (!botAddHotbarItem(bot, weaponItem, pickup.x, pickup.y)) return;
     bot.cooldown = 0;
     bot.reload = 0;
     bot.pendingReload = false;
@@ -3831,7 +3975,7 @@ function updateConsumableUse(fighter, dt, actionPressed) {
     throwSmokeGrenade(fighter);
     fighter.hotbar[fighter.activeSlot] = null;
     fighter.useHold = null;
-    addFeed(`${consumable.label} lancee`);
+    if (fighter.isPlayer || fighter.isTeammate) addFeed(`${consumable.label} lancee`);
     return;
   }
 
@@ -3853,7 +3997,7 @@ function updateConsumableUse(fighter, dt, actionPressed) {
 
     fighter.hotbar[fighter.activeSlot] = null;
     fighter.useHold = null;
-    addFeed(`${consumable.label} utilise`);
+    if (fighter.isPlayer || fighter.isTeammate) addFeed(`${consumable.label} utilise`);
   }
 }
 
@@ -5677,7 +5821,7 @@ function drawValuablePickup(type, color) {
 }
 
 function drawHeldItem(fighter) {
-  const item = fighter.isPlayer ? getActiveItem(fighter) : makeWeaponItem(fighter.weaponKey, fighter.mag);
+  const item = getActiveItem(fighter);
   if (!item) return;
   const swingProgress = fighter.swingDuration ? 1 - fighter.swingTimer / fighter.swingDuration : 1;
   const swing = fighter.swingTimer > 0 ? Math.sin(swingProgress * Math.PI) : 0;
