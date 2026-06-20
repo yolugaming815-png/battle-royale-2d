@@ -22,6 +22,11 @@ const ui = {
   lockerGrid: document.querySelector("#lockerGrid"),
   creditsCount: document.querySelector("#creditsCount"),
   sellLockerButton: document.querySelector("#sellLockerButton"),
+  equipExtractionButton: document.querySelector("#equipExtractionButton"),
+  lockerLoadout: document.querySelector("#lockerLoadout"),
+  bagPanel: document.querySelector("#bagPanel"),
+  bagGrid: document.querySelector("#bagGrid"),
+  bagCloseButton: document.querySelector("#bagCloseButton"),
   profileStats: document.querySelector("#profileStats"),
   healthBar: document.querySelector("#healthBar"),
   shieldBar: document.querySelector("#shieldBar"),
@@ -274,6 +279,7 @@ const profile = {
   skin: "gold",
   credits: 0,
   stash: [],
+  extractionLoadout: [],
 };
 
 const skins = [
@@ -314,6 +320,7 @@ function loadSavedData() {
         skin: typeof saved.profile.skin === "string" ? saved.profile.skin : profile.skin,
         credits: Number(saved.profile.credits) || 0,
         stash: Array.isArray(saved.profile.stash) ? saved.profile.stash : [],
+        extractionLoadout: Array.isArray(saved.profile.extractionLoadout) ? saved.profile.extractionLoadout : [],
       });
     }
     if (saved.settings && typeof saved.settings === "object") {
@@ -353,6 +360,7 @@ loadSavedData();
 let view = { width: 0, height: 0, dpr: 1 };
 let game = null;
 let lastGameMode = "normal";
+const lockerSelection = new Set();
 let lastFrame = 0;
 
 function rand(min, max) {
@@ -920,6 +928,7 @@ function newGame(mode = lastGameMode) {
     leaderboardSignature: "",
   };
   if (selectedMode === "extraction") addExtractionLoot(game);
+  if (selectedMode === "extraction") applyExtractionLoadout(game.player);
   syncEquippedFromHotbar(game.player);
 
   ui.menu.classList.add("hidden");
@@ -929,6 +938,21 @@ function newGame(mode = lastGameMode) {
   if (selectedMode === "night") addFeed("La zone apparaitra bientot.");
   if (selectedMode === "extraction") addFeed("Reste 6s dans une zone verte pour extraire.");
   drawMinimap();
+}
+
+function applyExtractionLoadout(player) {
+  const loadout = Array.isArray(profile.extractionLoadout) ? profile.extractionLoadout : [];
+  if (!loadout.length) return;
+  const failed = [];
+  for (const stored of loadout) {
+    const item = lockerItemToGameItem(stored);
+    if (!item) continue;
+    if (!equipBagItem(player, item, { silent: true, fromLoadout: true })) failed.push(stored);
+  }
+  if (failed.length) profile.stash.push(...failed);
+  profile.extractionLoadout = [];
+  saveData();
+  addFeed("Equipement d'extraction charge.");
 }
 
 function safeSpawn(obstacles, blockers = [], options = {}) {
@@ -2356,7 +2380,11 @@ function botCombatReady(bot) {
 
 function canPickup(fighter, pickup) {
   if (!pickup || pickup.taken) return false;
-  if (fighter.isPlayer) return true;
+  if (fighter.isPlayer) {
+    if (game.mode !== "extraction") return true;
+    if (pickup.kind === "ammo" || pickup.kind === "material") return true;
+    return fighter.extractionBag.length < fighter.backpack.capacity;
+  }
 
   if (pickup.kind === "ammo") return false;
   if (pickup.kind === "material") return materialTotal(fighter) < 90;
@@ -3076,6 +3104,10 @@ function updatePickupHold(fighter, dt) {
     fighter.pickupHold = null;
     return;
   }
+  if (fighter.isPlayer && game.mode === "extraction" && !keys.has("KeyE")) {
+    fighter.pickupHold = null;
+    return;
+  }
 
   const duration = pickupTime(pickup);
   if (!fighter.pickupHold || fighter.pickupHold.id !== pickup.id) {
@@ -3128,6 +3160,18 @@ function finishPlayerPickup(player, pickup) {
     spawnPickupBurst(pickup);
     addFeed(`+${pickup.amount} ${MATERIALS[pickup.type].label.toLowerCase()}`);
     game.pickups = game.pickups.filter((item) => !item.taken);
+    return;
+  }
+
+  if (game.mode === "extraction") {
+    const item = pickupToItem(pickup);
+    if (!item) return;
+    if (!addItemToBag(player, item)) return;
+    pickup.taken = true;
+    spawnPickupBurst(pickup);
+    addFeed(`${itemLabel(item)} range dans le sac`);
+    game.pickups = game.pickups.filter((item) => !item.taken);
+    renderBagPanel();
     return;
   }
 
@@ -3249,6 +3293,67 @@ function finishBotPickup(bot, pickup) {
   game.pickups = game.pickups.filter((item) => !item.taken);
 }
 
+function addItemToBag(player, item) {
+  if (!item) return false;
+  if (player.extractionBag.length >= player.backpack.capacity) {
+    addFeed("Sac plein");
+    return false;
+  }
+  player.extractionBag.push(item);
+  return true;
+}
+
+function equipBagItem(player, item, options = {}) {
+  if (!item) return false;
+  if (item.kind === "weapon" || item.kind === "consumable") {
+    const slot = firstEmptyHotbarSlot(player);
+    if (slot === -1) {
+      if (!options.silent) addFeed("Hotbar pleine");
+      return false;
+    }
+    player.hotbar[slot] = item;
+    if (!options.silent) addFeed(`${itemLabel(item)} equipe`);
+    syncEquippedFromHotbar(player);
+    return true;
+  }
+
+  if (item.kind === "backpack") {
+    const oldKey = player.backpackKey;
+    const nextBackpack = BACKPACKS[item.type];
+    if (!nextBackpack) return false;
+    player.backpack = { ...nextBackpack };
+    player.backpackKey = item.type;
+    if (oldKey && oldKey !== "default" && !options.fromLoadout) {
+      addItemToBag(player, { kind: "backpack", type: oldKey });
+    }
+    if (!options.silent) addFeed(`${nextBackpack.label} equipe`);
+    return true;
+  }
+
+  if (item.kind === "armor") {
+    const armor = ARMORS[item.type];
+    if (!armor) return false;
+    const old = player.armor[armor.slot];
+    player.armor[armor.slot] = { ...armor, type: item.type };
+    if (old && !options.fromLoadout) addItemToBag(player, { kind: "armor", type: old.type });
+    if (!options.silent) addFeed(`${armor.label} equipe`);
+    return true;
+  }
+
+  if (!options.silent) addFeed("Objet stocke, pas equipable");
+  return false;
+}
+
+function lockerItemToGameItem(item) {
+  if (!item) return null;
+  if (item.kind === "weapon") return makeWeaponItem(item.type, item.mag, item.rarity || "common");
+  if (item.kind === "consumable") return makeConsumableItem(item.type);
+  if (item.kind === "backpack") return { kind: "backpack", type: item.type };
+  if (item.kind === "armor") return { kind: "armor", type: item.type };
+  if (item.kind === "valuable") return { kind: "valuable", type: item.type };
+  return null;
+}
+
 function dropItemFromSlot(item, x, y) {
   const angle = rand(0, TAU);
   const dropX = clamp(x + Math.cos(angle) * 34, 28, WORLD.width - 28);
@@ -3265,7 +3370,11 @@ function dropExtractionItem(item, x, y) {
   const angle = rand(0, TAU);
   const dropX = clamp(x + Math.cos(angle) * 38, 28, WORLD.width - 28);
   const dropY = clamp(y + Math.sin(angle) * 38, 28, WORLD.height - 28);
-  game.pickups.push(makePickup(item.type, dropX, dropY));
+  if (item.kind === "weapon") {
+    game.pickups.push(makePickup(item.type, dropX, dropY, { mag: item.mag, rarity: item.rarity }));
+  } else {
+    game.pickups.push(makePickup(item.type, dropX, dropY));
+  }
 }
 
 function updateConsumableUse(fighter, dt, actionPressed) {
@@ -3649,6 +3758,7 @@ function updateHud() {
     game.hotbarSignature = hotbarSignature;
     renderHotbar();
   }
+  if (game.mode === "extraction" && game.bagOpen) renderBagPanel();
 
   const feedSignature = game.feed.map((item) => item.text).join("|");
   if (game.feedSignature !== feedSignature) {
@@ -3680,8 +3790,17 @@ function updatePickupPrompt() {
   const player = game.player;
   const hold = player.pickupHold;
   const pickup = hold ? game.pickups.find((item) => item.id === hold.id) : null;
+  const nearbyPickup = game.mode === "extraction" ? findPickupUnderFighter(player) : null;
 
   if (!pickup) {
+    if (nearbyPickup) {
+      ui.pickupPrompt.classList.remove("hidden");
+      ui.pickupPrompt.innerHTML = `
+        <div class="pickup-title"><span>${nearbyPickup.label}</span><span>Maintiens E</span></div>
+        <div class="pickup-bar"><span style="transform: scaleX(0)"></span></div>
+      `;
+      return;
+    }
     if (player.useHold) {
       const item = getActiveItem(player);
       const progress = player.useHold.progress / player.useHold.duration;
@@ -3700,11 +3819,13 @@ function updatePickupPrompt() {
 
   const progress = hold.progress / hold.duration;
   const emptySlot = firstEmptyHotbarSlot(player);
-  const slotText = pickup.kind === "ammo"
-    ? "ajout direct"
-    : emptySlot === -1
-      ? `remplace slot ${player.activeSlot + 1}`
-      : `ajoute slot ${emptySlot + 1}`;
+  const slotText = game.mode === "extraction"
+    ? (pickup.kind === "ammo" || pickup.kind === "material" ? "ajout direct" : "vers le sac")
+    : pickup.kind === "ammo"
+      ? "ajout direct"
+      : emptySlot === -1
+        ? `remplace slot ${player.activeSlot + 1}`
+        : `ajoute slot ${emptySlot + 1}`;
   ui.pickupPrompt.classList.remove("hidden");
   ui.pickupPrompt.innerHTML = `
     <div class="pickup-title"><span>${pickup.label}</span><span>${slotText} - ${Math.round(progress * 100)}%</span></div>
@@ -3745,6 +3866,98 @@ function renderHotbar() {
     slot.append(key, iconCanvas, name, meta);
     ui.hotbar.appendChild(slot);
   }
+}
+
+function toggleBagPanel(force = null) {
+  if (!game || game.state !== "playing" || game.mode !== "extraction") return;
+  game.bagOpen = force === null ? !game.bagOpen : Boolean(force);
+  renderBagPanel();
+}
+
+function renderBagPanel() {
+  if (!ui.bagPanel || !ui.bagGrid) return;
+  if (!game || game.mode !== "extraction" || !game.bagOpen) {
+    ui.bagPanel.classList.add("hidden");
+    return;
+  }
+  const player = game.player;
+  ui.bagPanel.classList.remove("hidden");
+  ui.bagGrid.innerHTML = "";
+
+  const header = document.createElement("div");
+  header.className = "bag-summary";
+  header.textContent = `${player.backpack.label} - ${player.extractionBag.length}/${player.backpack.capacity} slots`;
+  ui.bagGrid.appendChild(header);
+
+  if (!player.extractionBag.length) {
+    const empty = document.createElement("div");
+    empty.className = "bag-item bag-empty";
+    empty.textContent = "Sac vide";
+    ui.bagGrid.appendChild(empty);
+    return;
+  }
+
+  player.extractionBag.forEach((item, index) => {
+    const card = document.createElement("div");
+    card.className = "bag-item";
+    card.style.setProperty("--rarity", itemColor(item));
+
+    const iconCanvas = document.createElement("canvas");
+    iconCanvas.className = "bag-icon";
+    iconCanvas.width = 96;
+    iconCanvas.height = 72;
+    drawHotbarIcon(iconCanvas, item);
+
+    const info = document.createElement("div");
+    info.className = "bag-info";
+    const name = document.createElement("strong");
+    name.textContent = itemLabel(item);
+    const type = document.createElement("small");
+    type.textContent = item.kind === "valuable" ? "objet de valeur" : item.kind;
+    info.append(name, type);
+
+    const actions = document.createElement("div");
+    actions.className = "bag-actions";
+    const equip = document.createElement("button");
+    equip.type = "button";
+    equip.textContent = "Equiper";
+    equip.disabled = item.kind === "valuable";
+    equip.addEventListener("click", () => equipBagIndex(index));
+    const drop = document.createElement("button");
+    drop.type = "button";
+    drop.textContent = "Jeter";
+    drop.addEventListener("click", () => dropBagIndex(index));
+    actions.append(equip, drop);
+
+    card.append(iconCanvas, info, actions);
+    ui.bagGrid.appendChild(card);
+  });
+}
+
+function equipBagIndex(index) {
+  if (!game || game.mode !== "extraction") return;
+  const player = game.player;
+  const item = player.extractionBag[index];
+  if (!item) return;
+  if (!equipBagItem(player, item)) {
+    renderBagPanel();
+    return;
+  }
+  player.extractionBag.splice(index, 1);
+  game.hotbarSignature = "";
+  renderHotbar();
+  renderBagPanel();
+}
+
+function dropBagIndex(index) {
+  if (!game || game.mode !== "extraction") return;
+  const player = game.player;
+  const item = player.extractionBag[index];
+  if (!item) return;
+  player.extractionBag.splice(index, 1);
+  dropExtractionItem(item, player.x, player.y);
+  addFeed(`${itemLabel(item)} jete`);
+  renderBagPanel();
 }
 
 function drawHotbarIcon(canvasElement, item) {
@@ -5282,7 +5495,14 @@ function renderProfile() {
 
 function renderLocker() {
   if (!ui.lockerGrid) return;
+  ensureLockerIds();
   ui.creditsCount.textContent = `${profile.credits} credits`;
+  if (ui.lockerLoadout) {
+    const count = profile.extractionLoadout.length;
+    ui.lockerLoadout.textContent = count
+      ? `${count} objet${count > 1 ? "s" : ""} equipe${count > 1 ? "s" : ""} pour la prochaine extraction.`
+      : "Selectionne des equipements pour la prochaine extraction.";
+  }
   ui.lockerGrid.innerHTML = "";
 
   if (!profile.stash.length) {
@@ -5296,8 +5516,10 @@ function renderLocker() {
 
   for (const item of profile.stash) {
     const card = document.createElement("div");
-    card.className = "locker-item";
+    const selected = lockerSelection.has(item.id);
+    card.className = `locker-item${selected ? " selected" : ""}`;
     card.style.setProperty("--rarity", item.color || itemColor(item));
+    card.tabIndex = 0;
 
     const iconCanvas = document.createElement("canvas");
     iconCanvas.className = "locker-icon";
@@ -5314,8 +5536,81 @@ function renderLocker() {
     text.append(name, meta);
 
     card.append(iconCanvas, text);
+    card.addEventListener("click", () => toggleLockerItem(item.id));
+    card.addEventListener("keydown", (event) => {
+      if (event.code !== "Space" && event.code !== "Enter") return;
+      event.preventDefault();
+      toggleLockerItem(item.id);
+    });
     ui.lockerGrid.appendChild(card);
   }
+}
+
+function ensureLockerIds() {
+  let changed = false;
+  for (const item of [...profile.stash, ...profile.extractionLoadout]) {
+    if (!item.id) {
+      item.id = makeId("stash");
+      changed = true;
+    }
+  }
+  if (changed) saveData();
+}
+
+function toggleLockerItem(id) {
+  if (!id) return;
+  if (lockerSelection.has(id)) lockerSelection.delete(id);
+  else lockerSelection.add(id);
+  renderLocker();
+}
+
+function sellSelectedLockerItems() {
+  ensureLockerIds();
+  const selected = profile.stash.filter((item) => lockerSelection.has(item.id));
+  if (!selected.length) {
+    addMenuNotice("Selectionne au moins un objet a vendre.");
+    return;
+  }
+  profile.credits += selected.reduce((sum, item) => sum + (item.price || 0), 0);
+  profile.stash = profile.stash.filter((item) => !lockerSelection.has(item.id));
+  lockerSelection.clear();
+  saveData();
+  renderProfile();
+}
+
+function equipSelectedForExtraction() {
+  ensureLockerIds();
+  const selected = profile.stash.filter((item) => lockerSelection.has(item.id));
+  const equipable = selected.filter((item) => item.kind === "weapon" || item.kind === "consumable" || item.kind === "backpack" || item.kind === "armor");
+  if (!equipable.length) {
+    addMenuNotice("Selectionne une arme, un soin, une armure ou un sac.");
+    return;
+  }
+  const hotbarAlreadyReserved = profile.extractionLoadout.filter((item) => item.kind === "weapon" || item.kind === "consumable").length;
+  let hotbarSlotsLeft = Math.max(0, HOTBAR_SIZE - 1 - hotbarAlreadyReserved);
+  const picked = [];
+  for (const item of equipable) {
+    if (item.kind === "weapon" || item.kind === "consumable") {
+      if (hotbarSlotsLeft <= 0) continue;
+      hotbarSlotsLeft -= 1;
+    }
+    picked.push(item);
+  }
+  if (!picked.length) {
+    addMenuNotice("La hotbar de depart est deja pleine.");
+    return;
+  }
+  const pickedIds = new Set(picked.map((item) => item.id));
+  profile.extractionLoadout.push(...picked);
+  profile.stash = profile.stash.filter((item) => !pickedIds.has(item.id));
+  lockerSelection.clear();
+  saveData();
+  renderProfile();
+}
+
+function addMenuNotice(text) {
+  if (!ui.lockerLoadout) return;
+  ui.lockerLoadout.textContent = text;
 }
 
 function renderSkins() {
@@ -5391,9 +5686,13 @@ window.addEventListener("keydown", (event) => {
     return;
   }
 
-  const playKeys = ["KeyW", "KeyA", "KeyS", "KeyD", "KeyZ", "KeyQ", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight", "Space", "ShiftLeft", "ShiftRight", "KeyR", "KeyB", "KeyX", "Digit1", "Digit2", "Digit3", "Digit4", ...Object.values(settings.keybinds).flat()];
+  const playKeys = ["KeyW", "KeyA", "KeyS", "KeyD", "KeyZ", "KeyQ", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight", "Space", "ShiftLeft", "ShiftRight", "KeyR", "KeyB", "KeyE", "KeyI", "KeyX", "Digit1", "Digit2", "Digit3", "Digit4", ...Object.values(settings.keybinds).flat()];
   if (playKeys.includes(event.code)) event.preventDefault();
   if (game && game.state === "playing" && !event.repeat) {
+    if (event.code === "KeyI" && game.mode === "extraction") {
+      toggleBagPanel();
+      return;
+    }
     if ((settings.keybinds.build || []).includes(event.code)) {
       tryBuildWall(game.player);
       return;
@@ -5493,13 +5792,9 @@ ui.nightModeButton.addEventListener("click", () => newGame("night"));
 ui.extractionModeButton.addEventListener("click", () => newGame("extraction"));
 ui.retryButton.addEventListener("click", () => newGame(lastGameMode));
 ui.menuButton.addEventListener("click", showMenu);
-ui.sellLockerButton.addEventListener("click", () => {
-  const total = profile.stash.reduce((sum, item) => sum + item.price, 0);
-  profile.credits += total;
-  profile.stash = [];
-  saveData();
-  renderProfile();
-});
+ui.sellLockerButton.addEventListener("click", sellSelectedLockerItems);
+ui.equipExtractionButton.addEventListener("click", equipSelectedForExtraction);
+ui.bagCloseButton.addEventListener("click", () => toggleBagPanel(false));
 
 ui.volumeSlider.value = settings.volume;
 ui.showMinimapToggle.checked = settings.showMinimap;

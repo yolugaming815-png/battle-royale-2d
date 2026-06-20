@@ -24,6 +24,13 @@
       <div id="materials" class="materials" aria-label="Materiaux"></div>
       <div id="pickupPrompt" class="pickup-prompt hidden"></div>
       <div id="hotbar" class="hotbar" aria-label="Barre d'inventaire"></div>
+      <div id="bagPanel" class="bag-panel hidden" aria-label="Sac a dos">
+        <div class="bag-head">
+          <span>Sac a dos</span>
+          <button id="bagCloseButton" type="button">Fermer</button>
+        </div>
+        <div id="bagGrid" class="bag-grid"></div>
+      </div>
       <aside id="leaderboard" class="leaderboard" aria-label="Classement"></aside>
       <canvas id="minimap" width="156" height="156" aria-label="Mini-carte"></canvas>
       <div id="feed" class="feed" aria-live="polite"></div>
@@ -62,6 +69,8 @@
               <span>Clic droit pour construire</span>
               <span>X pour changer de materiau</span>
               <span>Molette pour changer de slot</span>
+              <span>E pour prendre en extraction</span>
+              <span>I pour ouvrir le sac en extraction</span>
               <span>Reste sur le loot pour le prendre</span>
               <span>Ouvre les coffres des structures</span>
               <span>Entre dans les maisons</span>
@@ -112,8 +121,12 @@
           <div class="menu-tab" data-menu-panel="locker">
             <div class="locker-head">
               <span id="creditsCount">0 credits</span>
-              <button id="sellLockerButton" type="button">Tout vendre</button>
+              <div class="locker-actions">
+                <button id="equipExtractionButton" type="button">Equiper</button>
+                <button id="sellLockerButton" type="button">Vendre selection</button>
+              </div>
             </div>
+            <p id="lockerLoadout" class="locker-loadout">Selectionne des equipements pour la prochaine extraction.</p>
             <div id="lockerGrid" class="locker-grid"></div>
           </div>
 
