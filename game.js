@@ -33,6 +33,7 @@ const ui = {
   materials: document.querySelector("#materials"),
   pickupPrompt: document.querySelector("#pickupPrompt"),
   hotbar: document.querySelector("#hotbar"),
+  leaderboard: document.querySelector("#leaderboard"),
   feed: document.querySelector("#feed"),
   resultTag: document.querySelector("#resultTag"),
   resultTitle: document.querySelector("#resultTitle"),
@@ -59,6 +60,28 @@ const DASH_ENERGY_COST = 34;
 const ENERGY_REGEN_RATE = 14;
 const ENERGY_REGEN_DELAY = 0.55;
 const OBSTACLE_GRID_SIZE = 260;
+const IO_THEME = {
+  grass: "#78ad43",
+  grassDark: "#5f9035",
+  grassLight: "#8fc95a",
+  grid: "rgba(37, 77, 24, 0.14)",
+  white: "#fff8df",
+  road: "#c3a75e",
+  roadEdge: "#9f8649",
+  water: "#1674be",
+  waterLight: "#69c6f3",
+  sand: "#cfb270",
+  ink: "#10140d",
+  building: "#8d9292",
+  buildingDark: "#5f6668",
+  roof: "#a5abad",
+  crate: "#a86c31",
+  wood: "#9b6736",
+  rock: "#8b8f8f",
+  danger: "#ef2f36",
+  exfil: "#65d137",
+  safe: "#ffffff",
+};
 const GAME_MODES = {
   normal: { id: "normal", label: "Mode normal" },
   night: { id: "night", label: "Night Life" },
@@ -254,10 +277,10 @@ const profile = {
 };
 
 const skins = [
-  { id: "gold", label: "Survivant", color: "#f4cf67" },
-  { id: "mint", label: "Recon", color: "#8ed3c0" },
-  { id: "ember", label: "Ember", color: "#ff9b73" },
-  { id: "violet", label: "Violet", color: "#b39cff" },
+  { id: "gold", label: "Survivant", color: "#ffd83d" },
+  { id: "mint", label: "Recon", color: "#43d17b" },
+  { id: "ember", label: "Ember", color: "#ff8c27" },
+  { id: "violet", label: "Violet", color: "#8f5bff" },
 ];
 
 const settings = {
@@ -757,7 +780,7 @@ function makeFighter(name, x, y, isPlayer = false) {
     y,
     radius: PLAYER_RADIUS,
     isPlayer,
-    color: isPlayer ? (skins.find((skin) => skin.id === profile.skin) || skins[0]).color : pick(["#8ed3c0", "#ff9b73", "#b7f07a", "#b39cff", "#f086c0"]),
+    color: isPlayer ? (skins.find((skin) => skin.id === profile.skin) || skins[0]).color : pick(["#e83c3c", "#2f91ff", "#43d17b", "#ff8c27", "#8f5bff", "#f0469e"]),
     health: 100,
     maxHealth: 100,
     shield: isPlayer ? 40 : rand(0, 35),
@@ -894,6 +917,7 @@ function newGame(mode = lastGameMode) {
     minimapTimer: 0,
     hotbarSignature: "",
     feedSignature: "",
+    leaderboardSignature: "",
   };
   if (selectedMode === "extraction") addExtractionLoot(game);
   syncEquippedFromHotbar(game.player);
@@ -1387,15 +1411,15 @@ function addCrateCluster(obstacles, centerX, centerY, radius, count, metalChance
 function makeMapFeatures() {
   return {
     zones: [
-      { id: "town", label: "Ville", x: 640, y: 560, w: 1720, h: 1280, color: "rgba(78, 79, 78, 0.34)" },
-      { id: "industrial", label: "Hangars", x: 5840, y: 560, w: 1760, h: 1260, color: "rgba(92, 94, 91, 0.32)" },
-      { id: "farm", label: "Ferme", x: 760, y: 2860, w: 1760, h: 1260, color: "rgba(143, 124, 54, 0.24)" },
-      { id: "forest", label: "Foret", x: 520, y: 6280, w: 2480, h: 2320, color: "rgba(30, 78, 42, 0.24)" },
-      { id: "quarry", label: "Carriere", x: 7520, y: 6680, w: 1460, h: 1260, color: "rgba(116, 118, 112, 0.24)" },
-      { id: "harbor", label: "Docks", x: 7600, y: 5000, w: 1320, h: 1100, color: "rgba(66, 91, 94, 0.24)" },
-      { id: "village", label: "Village", x: 3540, y: 7600, w: 1340, h: 1220, color: "rgba(89, 75, 58, 0.22)" },
-      { id: "military", label: "Base militaire", x: 7740, y: 760, w: 1440, h: 1140, color: "rgba(74, 86, 72, 0.28)" },
-      { id: "fire_station", label: "Caserne", x: 5400, y: 6360, w: 1160, h: 980, color: "rgba(104, 62, 54, 0.23)" },
+      { id: "town", label: "Ville", x: 640, y: 560, w: 1720, h: 1280, color: "rgba(255, 255, 255, 0.08)" },
+      { id: "industrial", label: "Hangars", x: 5840, y: 560, w: 1760, h: 1260, color: "rgba(255, 255, 255, 0.07)" },
+      { id: "farm", label: "Ferme", x: 760, y: 2860, w: 1760, h: 1260, color: "rgba(213, 185, 69, 0.12)" },
+      { id: "forest", label: "Foret", x: 520, y: 6280, w: 2480, h: 2320, color: "rgba(42, 121, 43, 0.14)" },
+      { id: "quarry", label: "Carriere", x: 7520, y: 6680, w: 1460, h: 1260, color: "rgba(255, 255, 255, 0.09)" },
+      { id: "harbor", label: "Docks", x: 7600, y: 5000, w: 1320, h: 1100, color: "rgba(22, 116, 190, 0.08)" },
+      { id: "village", label: "Village", x: 3540, y: 7600, w: 1340, h: 1220, color: "rgba(195, 167, 94, 0.1)" },
+      { id: "military", label: "Base militaire", x: 7740, y: 760, w: 1440, h: 1140, color: "rgba(41, 83, 34, 0.12)" },
+      { id: "fire_station", label: "Caserne", x: 5400, y: 6360, w: 1160, h: 980, color: "rgba(209, 76, 60, 0.08)" },
     ],
     rivers: [
       { x: 0, y: 1760, w: WORLD.width, h: 150 },
@@ -1452,14 +1476,14 @@ function makeMapFeatures() {
 
 function makeGroundPatches() {
   const patches = [];
-  const colors = ["#536647", "#627153", "#455b4a", "#6b6d4f", "#3e554b"];
-  for (let i = 0; i < 460; i += 1) {
+  const colors = ["#6ba13d", "#86bd50", "#5f963a", "#8db957"];
+  for (let i = 0; i < 260; i += 1) {
     patches.push({
       x: rand(0, WORLD.width),
       y: rand(0, WORLD.height),
-      radius: rand(80, 240),
+      radius: rand(70, 190),
       color: pick(colors),
-      alpha: rand(0.12, 0.24),
+      alpha: rand(0.07, 0.15),
     });
   }
   return patches;
@@ -1467,7 +1491,7 @@ function makeGroundPatches() {
 
 function makeGrass() {
   const blades = [];
-  for (let i = 0; i < 3200; i += 1) {
+  for (let i = 0; i < 1500; i += 1) {
     blades.push({
       x: rand(0, WORLD.width),
       y: rand(0, WORLD.height),
@@ -3535,6 +3559,49 @@ function updateCamera() {
   game.camera.y = clamp(target.y - view.height / 2, 0, Math.max(0, WORLD.height - view.height));
 }
 
+function leaderboardScore(fighter) {
+  const survival = Math.round((fighter.health + fighter.shield) * 4);
+  const loot = fighter.isPlayer ? materialTotal(fighter) * 2 + fighter.extractionBag.length * 120 : materialTotal(fighter);
+  return fighter.kills * 1000 + survival + loot;
+}
+
+function updateLeaderboard() {
+  if (!ui.leaderboard) return;
+  const rows = aliveFighters()
+    .map((fighter) => ({
+      fighter,
+      score: leaderboardScore(fighter),
+    }))
+    .sort((a, b) => b.score - a.score || a.fighter.name.localeCompare(b.fighter.name))
+    .slice(0, 5);
+  const signature = rows.map((row, index) => `${index}:${row.fighter.id}:${row.score}:${row.fighter.isPlayer}`).join("|");
+  if (game.leaderboardSignature === signature) return;
+  game.leaderboardSignature = signature;
+
+  ui.leaderboard.innerHTML = "";
+  const title = document.createElement("div");
+  title.className = "leaderboard-title";
+  const label = document.createElement("span");
+  label.textContent = "Top";
+  const score = document.createElement("span");
+  score.textContent = "Score";
+  title.append(label, score);
+  ui.leaderboard.appendChild(title);
+
+  rows.forEach((row, index) => {
+    const line = document.createElement("div");
+    line.className = `leaderboard-row${row.fighter.isPlayer ? " you" : ""}`;
+    const rank = document.createElement("span");
+    rank.textContent = `${index + 1}`;
+    const name = document.createElement("span");
+    name.textContent = row.fighter.isPlayer ? "You" : row.fighter.name;
+    const points = document.createElement("span");
+    points.textContent = `${row.score}`;
+    line.append(rank, name, points);
+    ui.leaderboard.appendChild(line);
+  });
+}
+
 function updateHud() {
   const player = game.player;
   if ((player.materials[player.selectedMaterial] ?? 0) < BUILD_COST) {
@@ -3575,6 +3642,7 @@ function updateHud() {
     return `<span class="material-pill${active}" style="--mat:${mat.color}">${mat.short} ${player.materials[material] ?? 0}</span>`;
   }).join("") + `<span class="material-cost">Mur: ${BUILD_COST}</span>`;
 
+  updateLeaderboard();
   updatePickupPrompt();
   const hotbarSignature = getHotbarSignature(player);
   if (game.hotbarSignature !== hotbarSignature) {
@@ -3795,24 +3863,41 @@ function render() {
 }
 
 function drawMenuBackdrop() {
-  ctx.fillStyle = "#1d2424";
+  ctx.fillStyle = IO_THEME.grass;
   ctx.fillRect(0, 0, view.width, view.height);
   ctx.save();
-  ctx.translate(view.width / 2, view.height / 2);
-  for (let i = 0; i < 42; i += 1) {
-    const angle = (i / 42) * TAU;
-    const radius = 80 + i * 12;
-    ctx.fillStyle = i % 2 === 0 ? "rgba(142, 211, 192, 0.08)" : "rgba(244, 207, 103, 0.07)";
+  ctx.strokeStyle = "rgba(37, 77, 24, 0.18)";
+  ctx.lineWidth = 2;
+  for (let x = -40; x < view.width + 80; x += 76) {
     ctx.beginPath();
-    ctx.arc(Math.cos(angle) * radius, Math.sin(angle) * radius, 22 + (i % 4) * 8, 0, TAU);
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, view.height);
+    ctx.stroke();
+  }
+  for (let y = -40; y < view.height + 80; y += 76) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(view.width, y);
+    ctx.stroke();
+  }
+  for (let i = 0; i < 28; i += 1) {
+    const x = (i * 211) % Math.max(1, view.width);
+    const y = (i * 137) % Math.max(1, view.height);
+    ctx.fillStyle = i % 3 === 0 ? "#5f9035" : "#8fc95a";
+    ctx.strokeStyle = IO_THEME.ink;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(x, y, 16 + (i % 4) * 5, 0, TAU);
     ctx.fill();
+    ctx.stroke();
   }
   ctx.restore();
 }
 
 function drawWorld() {
-  ctx.fillStyle = "#55644a";
+  ctx.fillStyle = IO_THEME.grass;
   ctx.fillRect(0, 0, WORLD.width, WORLD.height);
+  drawIoGrid();
 
   for (const patch of game.groundPatches) {
     const gradient = ctx.createRadialGradient(patch.x, patch.y, 0, patch.x, patch.y, patch.radius);
@@ -3840,12 +3925,36 @@ function drawWorld() {
   }
 }
 
+function drawIoGrid() {
+  const step = 120;
+  const startX = Math.floor(game.camera.x / step) * step;
+  const endX = Math.min(WORLD.width, game.camera.x + view.width + step);
+  const startY = Math.floor(game.camera.y / step) * step;
+  const endY = Math.min(WORLD.height, game.camera.y + view.height + step);
+  ctx.save();
+  ctx.strokeStyle = IO_THEME.grid;
+  ctx.lineWidth = 2;
+  for (let x = startX; x <= endX; x += step) {
+    ctx.beginPath();
+    ctx.moveTo(x, game.camera.y - step);
+    ctx.lineTo(x, game.camera.y + view.height + step);
+    ctx.stroke();
+  }
+  for (let y = startY; y <= endY; y += step) {
+    ctx.beginPath();
+    ctx.moveTo(game.camera.x - step, y);
+    ctx.lineTo(game.camera.x + view.width + step, y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawRoads() {
   ctx.save();
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.strokeStyle = "rgba(83, 78, 70, 0.52)";
-  ctx.lineWidth = 64;
+  ctx.strokeStyle = IO_THEME.roadEdge;
+  ctx.lineWidth = 74;
   for (const road of [
     [[560, 1210], [2540, 1210]],
     [[1510, 500], [1510, 2000]],
@@ -3863,8 +3972,27 @@ function drawRoads() {
     ctx.stroke();
   }
 
-  ctx.strokeStyle = "rgba(121, 101, 67, 0.28)";
-  ctx.lineWidth = 34;
+  ctx.strokeStyle = IO_THEME.road;
+  ctx.lineWidth = 58;
+  for (const road of [
+    [[560, 1210], [2540, 1210]],
+    [[1510, 500], [1510, 2000]],
+    [[5840, 1180], [7620, 1180]],
+    [[6740, 520], [6740, 1960]],
+    [[960, 3520], [2580, 3520]],
+    [[1640, 2840], [1640, 4280]],
+    [[7620, 5520], [9000, 5520]],
+    [[8180, 4860], [8180, 6280]],
+    [[3460, 8220], [5060, 8220]],
+  ]) {
+    ctx.beginPath();
+    ctx.moveTo(road[0][0], road[0][1]);
+    ctx.lineTo(road[1][0], road[1][1]);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = IO_THEME.roadEdge;
+  ctx.lineWidth = 42;
   for (const road of [
     [[760, 6840], [2920, 8260]],
     [[1260, 6640], [2420, 7240]],
@@ -3876,48 +4004,101 @@ function drawRoads() {
     ctx.stroke();
   }
 
-  ctx.strokeStyle = "rgba(91, 81, 65, 0.46)";
-  ctx.lineWidth = 58;
+  ctx.strokeStyle = IO_THEME.road;
+  ctx.lineWidth = 30;
+  for (const road of [
+    [[760, 6840], [2920, 8260]],
+    [[1260, 6640], [2420, 7240]],
+    [[7600, 7420], [9120, 7420]],
+  ]) {
+    ctx.beginPath();
+    ctx.moveTo(road[0][0], road[0][1]);
+    ctx.lineTo(road[1][0], road[1][1]);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = IO_THEME.roadEdge;
+  ctx.lineWidth = 62;
   ctx.beginPath();
   ctx.moveTo(-80, 900);
   ctx.bezierCurveTo(420, 760, 720, 1040, 1100, 880);
   ctx.bezierCurveTo(1480, 720, 1770, 880, 2680, 610);
   ctx.stroke();
 
-  ctx.strokeStyle = "rgba(127, 111, 79, 0.34)";
-  ctx.lineWidth = 34;
+  ctx.strokeStyle = IO_THEME.road;
+  ctx.lineWidth = 50;
+  ctx.beginPath();
+  ctx.moveTo(-80, 900);
+  ctx.bezierCurveTo(420, 760, 720, 1040, 1100, 880);
+  ctx.bezierCurveTo(1480, 720, 1770, 880, 2680, 610);
+  ctx.stroke();
+
+  ctx.strokeStyle = IO_THEME.roadEdge;
+  ctx.lineWidth = 42;
   ctx.beginPath();
   ctx.moveTo(1260, -80);
   ctx.bezierCurveTo(1160, 420, 1380, 730, 1310, 1040);
   ctx.bezierCurveTo(1240, 1370, 1370, 1600, 1450, 1880);
   ctx.stroke();
 
-  ctx.strokeStyle = "rgba(91, 81, 65, 0.38)";
-  ctx.lineWidth = 48;
+  ctx.strokeStyle = IO_THEME.road;
+  ctx.lineWidth = 30;
+  ctx.beginPath();
+  ctx.moveTo(1260, -80);
+  ctx.bezierCurveTo(1160, 420, 1380, 730, 1310, 1040);
+  ctx.bezierCurveTo(1240, 1370, 1370, 1600, 1450, 1880);
+  ctx.stroke();
+
+  ctx.strokeStyle = IO_THEME.roadEdge;
+  ctx.lineWidth = 54;
   ctx.beginPath();
   ctx.moveTo(2320, 120);
   ctx.bezierCurveTo(2900, 520, 3220, 1180, 4200, 980);
   ctx.bezierCurveTo(4880, 850, 5300, 1400, 5700, 1680);
   ctx.stroke();
 
-  ctx.strokeStyle = "rgba(127, 111, 79, 0.3)";
-  ctx.lineWidth = 38;
+  ctx.strokeStyle = IO_THEME.road;
+  ctx.lineWidth = 42;
+  ctx.beginPath();
+  ctx.moveTo(2320, 120);
+  ctx.bezierCurveTo(2900, 520, 3220, 1180, 4200, 980);
+  ctx.bezierCurveTo(4880, 850, 5300, 1400, 5700, 1680);
+  ctx.stroke();
+
+  ctx.strokeStyle = IO_THEME.roadEdge;
+  ctx.lineWidth = 46;
   ctx.beginPath();
   ctx.moveTo(360, 3400);
   ctx.bezierCurveTo(1120, 3100, 2020, 3560, 2860, 3000);
   ctx.bezierCurveTo(3500, 2580, 4280, 3050, 5460, 2860);
   ctx.stroke();
 
-  ctx.strokeStyle = "rgba(91, 81, 65, 0.4)";
-  ctx.lineWidth = 50;
+  ctx.strokeStyle = IO_THEME.road;
+  ctx.lineWidth = 34;
+  ctx.beginPath();
+  ctx.moveTo(360, 3400);
+  ctx.bezierCurveTo(1120, 3100, 2020, 3560, 2860, 3000);
+  ctx.bezierCurveTo(3500, 2580, 4280, 3050, 5460, 2860);
+  ctx.stroke();
+
+  ctx.strokeStyle = IO_THEME.roadEdge;
+  ctx.lineWidth = 56;
   ctx.beginPath();
   ctx.moveTo(5400, 2860);
   ctx.bezierCurveTo(6500, 2460, 7300, 3160, 8350, 2940);
   ctx.bezierCurveTo(9100, 2780, 9560, 3540, 10120, 3860);
   ctx.stroke();
 
-  ctx.strokeStyle = "rgba(127, 111, 79, 0.32)";
-  ctx.lineWidth = 42;
+  ctx.strokeStyle = IO_THEME.road;
+  ctx.lineWidth = 44;
+  ctx.beginPath();
+  ctx.moveTo(5400, 2860);
+  ctx.bezierCurveTo(6500, 2460, 7300, 3160, 8350, 2940);
+  ctx.bezierCurveTo(9100, 2780, 9560, 3540, 10120, 3860);
+  ctx.stroke();
+
+  ctx.strokeStyle = IO_THEME.roadEdge;
+  ctx.lineWidth = 50;
   ctx.beginPath();
   ctx.moveTo(620, 6220);
   ctx.bezierCurveTo(1620, 5740, 2480, 6640, 3840, 6100);
@@ -3925,8 +4106,25 @@ function drawRoads() {
   ctx.bezierCurveTo(9020, 5860, 9560, 6660, 10100, 7060);
   ctx.stroke();
 
-  ctx.strokeStyle = "rgba(91, 81, 65, 0.36)";
-  ctx.lineWidth = 44;
+  ctx.strokeStyle = IO_THEME.road;
+  ctx.lineWidth = 38;
+  ctx.beginPath();
+  ctx.moveTo(620, 6220);
+  ctx.bezierCurveTo(1620, 5740, 2480, 6640, 3840, 6100);
+  ctx.bezierCurveTo(5240, 5540, 6600, 6500, 8120, 6100);
+  ctx.bezierCurveTo(9020, 5860, 9560, 6660, 10100, 7060);
+  ctx.stroke();
+
+  ctx.strokeStyle = IO_THEME.roadEdge;
+  ctx.lineWidth = 50;
+  ctx.beginPath();
+  ctx.moveTo(2440, 10020);
+  ctx.bezierCurveTo(2820, 8700, 4020, 8420, 5220, 9020);
+  ctx.bezierCurveTo(6420, 9620, 7640, 8740, 9300, 9180);
+  ctx.stroke();
+
+  ctx.strokeStyle = IO_THEME.road;
+  ctx.lineWidth = 38;
   ctx.beginPath();
   ctx.moveTo(2440, 10020);
   ctx.bezierCurveTo(2820, 8700, 4020, 8420, 5220, 9020);
@@ -3941,15 +4139,14 @@ function drawMapFeatures() {
   for (const zone of features.zones || []) {
     ctx.fillStyle = zone.color;
     ctx.fillRect(zone.x, zone.y, zone.w, zone.h);
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.07)";
-    ctx.lineWidth = 5;
-    ctx.strokeRect(zone.x + 6, zone.y + 6, zone.w - 12, zone.h - 12);
   }
 
   for (const river of features.rivers) {
-    ctx.fillStyle = "rgba(54, 124, 162, 0.86)";
+    ctx.fillStyle = IO_THEME.waterLight;
+    ctx.fillRect(river.x - 12, river.y - 12, river.w + 24, river.h + 24);
+    ctx.fillStyle = IO_THEME.water;
     ctx.fillRect(river.x, river.y, river.w, river.h);
-    ctx.fillStyle = "rgba(142, 233, 255, 0.18)";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.22)";
     for (let i = 0; i < Math.ceil((river.w + river.h) / 180); i += 1) {
       const x = river.x + (i * 173) % Math.max(1, river.w);
       const y = river.y + (i * 97) % Math.max(1, river.h);
@@ -3958,8 +4155,9 @@ function drawMapFeatures() {
   }
 
   for (const bridge of features.bridges) {
-    roundRect(bridge.x, bridge.y, bridge.w, bridge.h, 6, "#786143");
-    ctx.fillStyle = "rgba(40, 27, 18, 0.26)";
+    roundRect(bridge.x, bridge.y, bridge.w, bridge.h, 6, IO_THEME.ink);
+    roundRect(bridge.x + 4, bridge.y + 4, bridge.w - 8, bridge.h - 8, 4, IO_THEME.wood);
+    ctx.fillStyle = "rgba(16, 20, 13, 0.32)";
     const planks = bridge.w > bridge.h ? Math.floor(bridge.w / 28) : Math.floor(bridge.h / 28);
     for (let i = 1; i < planks; i += 1) {
       if (bridge.w > bridge.h) {
@@ -3977,24 +4175,26 @@ function drawStealthZones() {
   ctx.save();
   for (const zone of features.stealthZones) {
     if (zone.type === "field") {
-      ctx.fillStyle = "rgba(198, 177, 87, 0.28)";
+      ctx.fillStyle = "rgba(130, 153, 48, 0.5)";
       ctx.fillRect(zone.x, zone.y, zone.w, zone.h);
-      ctx.strokeStyle = "rgba(96, 89, 42, 0.32)";
+      ctx.strokeStyle = "rgba(16, 20, 13, 0.3)";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(zone.x, zone.y, zone.w, zone.h);
       ctx.lineWidth = 2;
-      for (let x = zone.x + 16; x < zone.x + zone.w; x += 22) {
+      for (let x = zone.x + 18; x < zone.x + zone.w; x += 28) {
         ctx.beginPath();
         ctx.moveTo(x, zone.y + 10);
         ctx.lineTo(x + 10, zone.y + zone.h - 12);
         ctx.stroke();
       }
     } else {
-      const gradient = ctx.createRadialGradient(zone.x, zone.y, 0, zone.x, zone.y, zone.r);
-      gradient.addColorStop(0, "rgba(27, 86, 43, 0.52)");
-      gradient.addColorStop(1, "rgba(27, 86, 43, 0.08)");
-      ctx.fillStyle = gradient;
+      ctx.fillStyle = "rgba(38, 104, 41, 0.56)";
       ctx.beginPath();
       ctx.arc(zone.x, zone.y, zone.r, 0, TAU);
       ctx.fill();
+      ctx.strokeStyle = IO_THEME.ink;
+      ctx.lineWidth = 4;
+      ctx.stroke();
     }
   }
   ctx.restore();
@@ -4004,7 +4204,7 @@ function drawGrass() {
   ctx.save();
   ctx.lineWidth = 2;
   for (const blade of game.grass) {
-    ctx.strokeStyle = blade.tone > 0.5 ? "rgba(32, 59, 39, 0.35)" : "rgba(188, 195, 131, 0.22)";
+    ctx.strokeStyle = blade.tone > 0.5 ? "rgba(38, 82, 30, 0.24)" : "rgba(190, 219, 113, 0.2)";
     ctx.beginPath();
     ctx.moveTo(blade.x, blade.y);
     ctx.lineTo(blade.x + Math.sin(blade.rot) * blade.length, blade.y - blade.length);
@@ -4015,15 +4215,18 @@ function drawGrass() {
 
 function drawObstacle(obstacle) {
   if (obstacle.type === "tree") {
-    ctx.fillStyle = "#4a2f22";
+    ctx.fillStyle = "#6b4428";
     ctx.beginPath();
     ctx.arc(obstacle.x + 3, obstacle.y + 8, obstacle.radius * 0.34, 0, TAU);
     ctx.fill();
-    ctx.fillStyle = obstacle.tone > 0.5 ? "#244f36" : "#2f6540";
+    ctx.fillStyle = obstacle.tone > 0.5 ? "#437b2e" : "#57943a";
+    ctx.strokeStyle = IO_THEME.ink;
+    ctx.lineWidth = 5;
     ctx.beginPath();
     ctx.arc(obstacle.x, obstacle.y, obstacle.radius, 0, TAU);
     ctx.fill();
-    ctx.fillStyle = "rgba(178, 227, 151, 0.16)";
+    ctx.stroke();
+    ctx.fillStyle = "rgba(211, 255, 158, 0.22)";
     ctx.beginPath();
     ctx.arc(obstacle.x - obstacle.radius * 0.28, obstacle.y - obstacle.radius * 0.28, obstacle.radius * 0.46, 0, TAU);
     ctx.fill();
@@ -4031,11 +4234,14 @@ function drawObstacle(obstacle) {
   }
 
   if (obstacle.type === "rock") {
-    ctx.fillStyle = obstacle.tone > 0.5 ? "#7d8580" : "#68716e";
+    ctx.fillStyle = obstacle.tone > 0.5 ? "#a0a5a2" : IO_THEME.rock;
+    ctx.strokeStyle = IO_THEME.ink;
+    ctx.lineWidth = 5;
     ctx.beginPath();
     ctx.ellipse(obstacle.x, obstacle.y, obstacle.radius * 1.12, obstacle.radius * 0.82, -0.3, 0, TAU);
     ctx.fill();
-    ctx.fillStyle = "rgba(255, 255, 255, 0.14)";
+    ctx.stroke();
+    ctx.fillStyle = "rgba(255, 255, 255, 0.25)";
     ctx.beginPath();
     ctx.arc(obstacle.x - obstacle.radius * 0.25, obstacle.y - obstacle.radius * 0.25, obstacle.radius * 0.22, 0, TAU);
     ctx.fill();
@@ -4043,8 +4249,9 @@ function drawObstacle(obstacle) {
   }
 
   if (obstacle.type === "wall") {
-    roundRect(obstacle.x, obstacle.y, obstacle.w, obstacle.h, 4, "#2f3738");
-    ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
+    roundRect(obstacle.x, obstacle.y, obstacle.w, obstacle.h, 4, IO_THEME.ink);
+    roundRect(obstacle.x + 3, obstacle.y + 3, obstacle.w - 6, obstacle.h - 6, 2, IO_THEME.buildingDark);
+    ctx.fillStyle = "rgba(255, 255, 255, 0.12)";
     ctx.fillRect(obstacle.x + 2, obstacle.y + 2, Math.max(0, obstacle.w - 4), 2);
     return;
   }
@@ -4052,7 +4259,8 @@ function drawObstacle(obstacle) {
   if (obstacle.type === "built_wall") {
     const material = MATERIALS[obstacle.material] || MATERIALS.wood;
     const healthRatio = clamp(obstacle.health / obstacle.maxHealth, 0, 1);
-    roundRect(obstacle.x, obstacle.y, obstacle.w, obstacle.h, 5, material.wallColor);
+    roundRect(obstacle.x, obstacle.y, obstacle.w, obstacle.h, 5, IO_THEME.ink);
+    roundRect(obstacle.x + 3, obstacle.y + 3, obstacle.w - 6, obstacle.h - 6, 3, material.wallColor);
     ctx.fillStyle = "rgba(255, 255, 255, 0.14)";
     if (obstacle.w > obstacle.h) {
       for (let x = obstacle.x + 10; x < obstacle.x + obstacle.w - 4; x += 24) {
@@ -4075,54 +4283,62 @@ function drawObstacle(obstacle) {
   }
 
   if (obstacle.type === "crate") {
-    roundRect(obstacle.x, obstacle.y, obstacle.w, obstacle.h, 5, "#806143");
-    ctx.strokeStyle = "rgba(42, 29, 20, 0.55)";
+    roundRect(obstacle.x, obstacle.y, obstacle.w, obstacle.h, 5, IO_THEME.ink);
+    roundRect(obstacle.x + 4, obstacle.y + 4, obstacle.w - 8, obstacle.h - 8, 3, IO_THEME.crate);
+    ctx.strokeStyle = "rgba(42, 29, 20, 0.78)";
     ctx.lineWidth = 4;
-    ctx.strokeRect(obstacle.x + 7, obstacle.y + 7, obstacle.w - 14, obstacle.h - 14);
+    ctx.strokeRect(obstacle.x + 10, obstacle.y + 10, obstacle.w - 20, obstacle.h - 20);
     ctx.beginPath();
-    ctx.moveTo(obstacle.x + 8, obstacle.y + 8);
-    ctx.lineTo(obstacle.x + obstacle.w - 8, obstacle.y + obstacle.h - 8);
-    ctx.moveTo(obstacle.x + obstacle.w - 8, obstacle.y + 8);
-    ctx.lineTo(obstacle.x + 8, obstacle.y + obstacle.h - 8);
+    ctx.moveTo(obstacle.x + 11, obstacle.y + 11);
+    ctx.lineTo(obstacle.x + obstacle.w - 11, obstacle.y + obstacle.h - 11);
+    ctx.moveTo(obstacle.x + obstacle.w - 11, obstacle.y + 11);
+    ctx.lineTo(obstacle.x + 11, obstacle.y + obstacle.h - 11);
     ctx.stroke();
     return;
   }
 
   const style = buildingStyle(obstacle.variant);
-  roundRect(obstacle.x, obstacle.y, obstacle.w, obstacle.h, 7, style.floor);
+  ctx.fillStyle = "rgba(16, 20, 13, 0.22)";
+  ctx.fillRect(obstacle.x + 18, obstacle.y + 18, obstacle.w, obstacle.h);
+  roundRect(obstacle.x, obstacle.y, obstacle.w, obstacle.h, 7, IO_THEME.ink);
+  roundRect(obstacle.x + 5, obstacle.y + 5, obstacle.w - 10, obstacle.h - 10, 4, style.floor);
   ctx.fillStyle = style.inner;
-  ctx.fillRect(obstacle.x + 16, obstacle.y + 16, obstacle.w - 32, obstacle.h - 32);
+  ctx.fillRect(obstacle.x + 24, obstacle.y + 24, obstacle.w - 48, obstacle.h - 48);
   if (obstacle.variant === "military" || obstacle.variant === "barracks") {
-    ctx.fillStyle = "rgba(184, 196, 171, 0.12)";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.14)";
     for (let x = obstacle.x + 36; x < obstacle.x + obstacle.w - 24; x += 48) {
       ctx.fillRect(x, obstacle.y + 18, 18, obstacle.h - 36);
     }
   }
   if (obstacle.variant === "fire_station") {
-    ctx.fillStyle = "rgba(234, 82, 72, 0.42)";
+    ctx.fillStyle = "#d14c3c";
     ctx.fillRect(obstacle.x + 22, obstacle.y + 20, obstacle.w - 44, 18);
-    ctx.fillStyle = "rgba(245, 231, 176, 0.32)";
+    ctx.fillStyle = "#fff0ad";
     ctx.fillRect(obstacle.x + obstacle.w * 0.62, obstacle.y + obstacle.h - 42, 70, 26);
   }
   if (obstacle.variant === "garage") {
-    ctx.fillStyle = "rgba(214, 225, 225, 0.24)";
+    ctx.fillStyle = "#cad4d4";
     ctx.fillRect(obstacle.x + 20, obstacle.y + obstacle.h - 44, obstacle.w - 40, 22);
   }
-  ctx.fillStyle = "rgba(244, 207, 103, 0.26)";
-  ctx.fillRect(obstacle.x + obstacle.w * 0.18, obstacle.y + 12, 30, 22);
-  ctx.fillRect(obstacle.x + obstacle.w * 0.62, obstacle.y + obstacle.h - 34, 34, 22);
+  ctx.fillStyle = "#2f7ebd";
+  ctx.fillRect(obstacle.x + obstacle.w * 0.18, obstacle.y + 12, 34, 18);
+  ctx.fillRect(obstacle.x + obstacle.w * 0.62, obstacle.y + obstacle.h - 32, 38, 18);
+  ctx.strokeStyle = IO_THEME.ink;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(obstacle.x + obstacle.w * 0.18, obstacle.y + 12, 34, 18);
+  ctx.strokeRect(obstacle.x + obstacle.w * 0.62, obstacle.y + obstacle.h - 32, 38, 18);
 }
 
 function buildingStyle(variant) {
   const styles = {
-    farm: { floor: "#6a5a3d", inner: "#806a45" },
-    large_house: { floor: "#525a5b", inner: "#343b3d" },
-    military: { floor: "#495448", inner: "#303932" },
-    barracks: { floor: "#56604f", inner: "#394338" },
-    fire_station: { floor: "#5e4542", inner: "#3d3838" },
-    garage: { floor: "#4a5050", inner: "#343b3d" },
+    farm: { floor: "#b08443", inner: "#8f6530" },
+    large_house: { floor: "#a5abad", inner: "#7c8588" },
+    military: { floor: "#72835f", inner: "#566647" },
+    barracks: { floor: "#879071", inner: "#667255" },
+    fire_station: { floor: "#a0655c", inner: "#7d4d48" },
+    garage: { floor: "#a5abad", inner: "#7d8588" },
   };
-  return styles[variant] || { floor: "#4b5355", inner: "#343b3d" };
+  return styles[variant] || { floor: IO_THEME.roof, inner: IO_THEME.building };
 }
 
 function roundRect(x, y, w, h, radius, color) {
@@ -4158,14 +4374,14 @@ function fillRoundRect(target, x, y, w, h, radius, color) {
 function drawZone() {
   const zone = game.zone;
   ctx.save();
-  ctx.fillStyle = "rgba(56, 116, 176, 0.28)";
+  ctx.fillStyle = "rgba(239, 47, 54, 0.28)";
   ctx.beginPath();
   ctx.rect(-600, -600, WORLD.width + 1200, WORLD.height + 1200);
   ctx.arc(zone.x, zone.y, zone.radius, 0, TAU, true);
   ctx.fill("evenodd");
 
-  ctx.strokeStyle = zone.mode === "shrinking" ? "rgba(255, 210, 102, 0.95)" : "rgba(142, 233, 255, 0.85)";
-  ctx.lineWidth = zone.mode === "shrinking" ? 7 : 5;
+  ctx.strokeStyle = IO_THEME.danger;
+  ctx.lineWidth = zone.mode === "shrinking" ? 8 : 6;
   ctx.setLineDash(zone.mode === "shrinking" ? [16, 13] : []);
   ctx.beginPath();
   ctx.arc(zone.x, zone.y, zone.radius, 0, TAU);
@@ -4177,8 +4393,8 @@ function drawExtractionZones() {
   if (!game.extractionZones || !game.extractionZones.length) return;
   ctx.save();
   for (const zone of game.extractionZones) {
-    ctx.fillStyle = "rgba(80, 200, 120, 0.18)";
-    ctx.strokeStyle = "rgba(88, 240, 207, 0.9)";
+    ctx.fillStyle = "rgba(101, 209, 55, 0.2)";
+    ctx.strokeStyle = IO_THEME.exfil;
     ctx.lineWidth = 5;
     ctx.setLineDash([18, 12]);
     ctx.beginPath();
@@ -4278,10 +4494,17 @@ function drawPickups() {
     const bob = Math.sin(pickup.pulse) * 4;
     ctx.save();
     ctx.translate(pickup.x, pickup.y + bob);
-    ctx.shadowColor = pickup.color;
-    ctx.shadowBlur = 15;
+    ctx.shadowColor = "transparent";
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "rgba(255, 255, 255, 0.32)";
+    ctx.strokeStyle = IO_THEME.ink;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, 0, 24, 0, TAU);
+    ctx.fill();
+    ctx.stroke();
     ctx.fillStyle = pickup.color;
-    ctx.strokeStyle = "rgba(12, 15, 16, 0.72)";
+    ctx.strokeStyle = IO_THEME.ink;
     ctx.lineWidth = 3;
 
     if (pickup.kind === "weapon") {
@@ -4375,16 +4598,14 @@ function drawChests() {
     const bob = Math.sin(chest.pulse) * 2;
     ctx.save();
     ctx.translate(chest.x, chest.y + bob);
-    ctx.shadowColor = chest.opened ? "rgba(0,0,0,0)" : "#f4cf67";
-    ctx.shadowBlur = chest.opened ? 0 : 16;
-    roundRect(-20, -14, 40, 28, 5, chest.opened ? "#5a4630" : "#8a6337");
-    ctx.fillStyle = chest.opened ? "#3d3328" : "#f4cf67";
+    ctx.shadowColor = "transparent";
+    ctx.shadowBlur = 0;
+    roundRect(-22, -16, 44, 32, 5, IO_THEME.ink);
+    roundRect(-18, -12, 36, 24, 3, chest.opened ? "#7a522b" : "#ffcb38");
+    ctx.fillStyle = chest.opened ? "#4d3823" : "#fff0ad";
     ctx.fillRect(-20, -3, 40, 7);
-    ctx.fillStyle = chest.opened ? "#2b251f" : "#3a2b1d";
+    ctx.fillStyle = IO_THEME.ink;
     ctx.fillRect(-5, -6, 10, 13);
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.45)";
-    ctx.lineWidth = 3;
-    ctx.strokeRect(-20, -14, 40, 28);
     ctx.restore();
   }
 }
@@ -4683,11 +4904,24 @@ function drawBullets() {
   for (const bullet of game.bullets) {
     ctx.save();
     ctx.translate(bullet.x, bullet.y);
-    ctx.fillStyle = bullet.color;
-    ctx.shadowColor = bullet.color;
-    ctx.shadowBlur = 10;
+    const angle = Math.atan2(bullet.vy, bullet.vx);
+    ctx.rotate(angle);
+    ctx.lineCap = "round";
+    ctx.strokeStyle = IO_THEME.ink;
+    ctx.lineWidth = Math.max(5, bullet.radius + 3);
     ctx.beginPath();
-    ctx.arc(0, 0, bullet.radius, 0, TAU);
+    ctx.moveTo(-10, 0);
+    ctx.lineTo(8, 0);
+    ctx.stroke();
+    ctx.strokeStyle = bullet.color;
+    ctx.lineWidth = Math.max(3, bullet.radius);
+    ctx.beginPath();
+    ctx.moveTo(-10, 0);
+    ctx.lineTo(8, 0);
+    ctx.stroke();
+    ctx.fillStyle = "#fff7b7";
+    ctx.beginPath();
+    ctx.arc(9, 0, 2.2, 0, TAU);
     ctx.fill();
     ctx.restore();
   }
@@ -4717,42 +4951,59 @@ function drawFighter(fighter) {
   drawHeldItem(fighter);
 
   ctx.fillStyle = fighter.color;
-  ctx.strokeStyle = fighter.isPlayer ? "#fff3bb" : "rgba(0,0,0,0.42)";
-  ctx.lineWidth = fighter.isPlayer ? 3 : 2;
+  ctx.strokeStyle = IO_THEME.ink;
+  ctx.lineWidth = fighter.isPlayer ? 5 : 4;
   ctx.beginPath();
   ctx.arc(0, 0, fighter.radius, 0, TAU);
   ctx.fill();
   ctx.stroke();
 
-  ctx.fillStyle = "rgba(255, 255, 255, 0.45)";
+  ctx.fillStyle = "rgba(255, 255, 255, 0.42)";
   ctx.beginPath();
   ctx.arc(6, -7, fighter.radius * 0.34, 0, TAU);
   ctx.fill();
 
   ctx.restore();
 
+  drawFighterName(fighter);
   drawFighterBars(fighter);
+}
+
+function drawFighterName(fighter) {
+  const label = fighter.isPlayer ? "You" : fighter.name;
+  ctx.save();
+  ctx.font = "900 16px Segoe UI, Inter, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  ctx.lineWidth = 5;
+  ctx.strokeStyle = IO_THEME.ink;
+  ctx.fillStyle = IO_THEME.white || "#fff8df";
+  ctx.strokeText(label, fighter.x, fighter.y - fighter.radius - 25);
+  ctx.fillText(label, fighter.x, fighter.y - fighter.radius - 25);
+  ctx.restore();
 }
 
 function drawFighterBars(fighter) {
   const width = 42;
   const x = fighter.x - width / 2;
   const y = fighter.y - fighter.radius - 17;
-  ctx.fillStyle = "rgba(0, 0, 0, 0.38)";
-  ctx.fillRect(x, y, width, 5);
-  ctx.fillStyle = fighter.isPlayer ? "#ff9b73" : "#e84f4f";
-  ctx.fillRect(x, y, width * clamp(fighter.health / fighter.maxHealth, 0, 1), 5);
+  ctx.fillStyle = IO_THEME.ink;
+  ctx.fillRect(x - 2, y - 1, width + 4, 7);
+  ctx.fillStyle = "#65d137";
+  ctx.fillRect(x, y + 1, width * clamp(fighter.health / fighter.maxHealth, 0, 1), 3);
   if (fighter.shield > 0) {
-    ctx.fillStyle = "#4aa7ff";
-    ctx.fillRect(x, y - 6, width * clamp(fighter.shield / fighter.maxShield, 0, 1), 4);
+    ctx.fillStyle = IO_THEME.ink;
+    ctx.fillRect(x - 2, y - 8, width + 4, 6);
+    ctx.fillStyle = "#2787df";
+    ctx.fillRect(x, y - 7, width * clamp(fighter.shield / fighter.maxShield, 0, 1), 3);
   }
   if (fighter.reload > 0) {
     const weapon = getEquippedWeapon(fighter);
     const progress = weapon ? 1 - fighter.reload / weapon.reload : 0;
-    ctx.fillStyle = "rgba(0,0,0,0.42)";
-    ctx.fillRect(x, y - 13, width, 4);
-    ctx.fillStyle = "#f4cf67";
-    ctx.fillRect(x, y - 13, width * clamp(progress, 0, 1), 4);
+    ctx.fillStyle = IO_THEME.ink;
+    ctx.fillRect(x - 2, y - 15, width + 4, 6);
+    ctx.fillStyle = "#ffe368";
+    ctx.fillRect(x, y - 14, width * clamp(progress, 0, 1), 3);
   }
 }
 
@@ -4819,10 +5070,10 @@ function drawMinimap() {
   const sx = width / WORLD.width;
   const sy = height / WORLD.height;
   mini.clearRect(0, 0, width, height);
-  mini.fillStyle = "rgba(33, 42, 38, 0.95)";
+  mini.fillStyle = IO_THEME.ink;
   mini.fillRect(0, 0, width, height);
 
-  mini.fillStyle = "rgba(84, 100, 74, 0.9)";
+  mini.fillStyle = IO_THEME.grass;
   mini.fillRect(3, 3, width - 6, height - 6);
 
   if (game.mapFeatures) {
@@ -4831,17 +5082,17 @@ function drawMinimap() {
       mini.fillRect(zone.x * sx, zone.y * sy, Math.max(2, zone.w * sx), Math.max(2, zone.h * sy));
     }
 
-    mini.fillStyle = "rgba(61, 121, 148, 0.88)";
+    mini.fillStyle = IO_THEME.water;
     for (const river of game.mapFeatures.rivers) {
       mini.fillRect(river.x * sx, river.y * sy, Math.max(1, river.w * sx), Math.max(1, river.h * sy));
     }
 
-    mini.fillStyle = "rgba(151, 116, 70, 0.95)";
+    mini.fillStyle = IO_THEME.road;
     for (const bridge of game.mapFeatures.bridges) {
       mini.fillRect(bridge.x * sx, bridge.y * sy, Math.max(2, bridge.w * sx), Math.max(2, bridge.h * sy));
     }
 
-    mini.fillStyle = "rgba(73, 128, 72, 0.72)";
+    mini.fillStyle = "rgba(58, 126, 42, 0.8)";
     for (const zone of game.mapFeatures.stealthZones) {
       if (zone.type === "field") {
         mini.fillRect(zone.x * sx, zone.y * sy, Math.max(2, zone.w * sx), Math.max(2, zone.h * sy));
@@ -4855,12 +5106,12 @@ function drawMinimap() {
 
   for (const obstacle of game.obstacles) {
     if (obstacle.type !== "building" && obstacle.type !== "wall") continue;
-    mini.fillStyle = obstacle.type === "building" ? "rgba(45, 53, 54, 0.95)" : "rgba(26, 31, 32, 0.78)";
+    mini.fillStyle = obstacle.type === "building" ? "#747b7b" : "#343a39";
     mini.fillRect(obstacle.x * sx, obstacle.y * sy, Math.max(1, obstacle.w * sx), Math.max(1, obstacle.h * sy));
   }
 
   if (game.zone.mode !== "hidden") {
-    mini.strokeStyle = "rgba(142, 233, 255, 0.9)";
+    mini.strokeStyle = IO_THEME.danger;
     mini.lineWidth = 2;
     mini.beginPath();
     mini.arc(game.zone.x * sx, game.zone.y * sy, game.zone.radius * sx, 0, TAU);
@@ -4868,7 +5119,7 @@ function drawMinimap() {
   }
 
   if (game.extractionZones && game.extractionZones.length) {
-    mini.strokeStyle = "rgba(88, 240, 207, 0.95)";
+    mini.strokeStyle = IO_THEME.exfil;
     mini.lineWidth = 2;
     for (const zone of game.extractionZones) {
       mini.beginPath();
@@ -4877,9 +5128,23 @@ function drawMinimap() {
     }
   }
 
-  mini.fillStyle = "#fff3bb";
+  for (const fighter of aliveFighters()) {
+    if (!fighter.isPlayer && distance(fighter, game.player) > 1400) continue;
+    mini.fillStyle = fighter.color;
+    mini.strokeStyle = IO_THEME.ink;
+    mini.lineWidth = fighter.isPlayer ? 2 : 1;
+    mini.beginPath();
+    mini.arc(fighter.x * sx, fighter.y * sy, fighter.isPlayer ? 4.2 : 2.8, 0, TAU);
+    mini.fill();
+    mini.stroke();
+  }
+
+  mini.fillStyle = IO_THEME.white;
   mini.beginPath();
-  mini.arc(game.player.x * sx, game.player.y * sy, 3.4, 0, TAU);
+  mini.moveTo(game.player.x * sx, game.player.y * sy - 7);
+  mini.lineTo(game.player.x * sx + 5, game.player.y * sy + 5);
+  mini.lineTo(game.player.x * sx - 5, game.player.y * sy + 5);
+  mini.closePath();
   mini.fill();
 }
 
