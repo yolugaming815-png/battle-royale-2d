@@ -104,6 +104,10 @@ const TEAM_MODES = {
 const PLAYER_TEAM_ID = "player-team";
 const REVIVE_TIME = 4;
 const REVIVE_RANGE = 62;
+const DOWNED_MAX_HEALTH = 100;
+const DOWNED_PROTECTION_TIME = 1.5;
+const DOWNED_DEATH_TIME = 30;
+const DOWNED_SPEED_MULT = 0.34;
 const EXTRACTION_BOT_COUNT = 99;
 const EXTRACTION_EXFIL_TIME = 6;
 const DEFAULT_BACKPACK = { label: "Sac leger", rarity: "common", capacity: 4, color: "#b8bec6", price: 80 };
@@ -849,6 +853,9 @@ function makeFighter(name, x, y, isPlayer = false, options = {}) {
     alive: true,
     downed: false,
     downedTimer: 0,
+    downedHealth: DOWNED_MAX_HEALTH,
+    downedMaxHealth: DOWNED_MAX_HEALTH,
+    downedShield: 0,
     reviveHold: null,
     aim: 0,
     moveX: 0,
@@ -1867,8 +1874,15 @@ function updatePlayer(dt) {
 
   tickFighter(player, dt);
   if (player.downed) {
-    player.moveX = 0;
-    player.moveY = 0;
+    updateDownedFighter(player, dt);
+    if (!player.alive) return;
+    const input = readMovementInput();
+    player.moveX = input.x;
+    player.moveY = input.y;
+    player.aim = touchInput.aiming
+      ? Math.atan2(touchInput.aimY, touchInput.aimX)
+      : Math.atan2(mouse.worldY - player.y, mouse.worldX - player.x);
+    moveFighter(player, input.x * player.speed * DOWNED_SPEED_MULT * dt, input.y * player.speed * DOWNED_SPEED_MULT * dt);
     player.useHold = null;
     applyStormDamage(player, dt);
     return;
@@ -2022,6 +2036,8 @@ function updateBots(dt) {
     if (!bot.alive) continue;
     tickFighter(bot, dt);
     if (bot.downed) {
+      updateDownedFighter(bot, dt);
+      if (!bot.alive) continue;
       bot.moveX = 0;
       bot.moveY = 0;
       applyStormDamage(bot, dt);
@@ -3106,7 +3122,13 @@ function damageFighter(fighter, amount, source) {
   if (!fighter.alive) return;
   if (source && source !== fighter && sameTeam(source, fighter)) return;
   if (fighter.downed) {
-    eliminateFighter(fighter, source);
+    if (fighter.downedShield > 0 || fighter.invuln > 0) {
+      spawnHit(fighter.x, fighter.y, "#58f0cf", 8);
+      return;
+    }
+    fighter.downedHealth -= amount;
+    spawnHit(fighter.x, fighter.y, "#ff5a66", 8);
+    if (fighter.downedHealth <= 0) eliminateFighter(fighter, source);
     return;
   }
   if (source && source !== fighter && source.alive) {
@@ -3145,7 +3167,9 @@ function applyArmorMitigation(fighter, amount) {
 function damageByStorm(fighter, amount) {
   if (!fighter.alive) return;
   if (fighter.downed) {
-    eliminateFighter(fighter, null, true);
+    if (fighter.downedShield > 0) return;
+    fighter.downedHealth -= amount;
+    if (fighter.downedHealth <= 0) eliminateFighter(fighter, null, true);
     return;
   }
   fighter.health -= amount;
@@ -3161,6 +3185,10 @@ function downFighter(fighter, source, storm = false) {
   fighter.health = 1;
   fighter.shield = 0;
   fighter.downedTimer = 0;
+  fighter.downedHealth = DOWNED_MAX_HEALTH;
+  fighter.downedMaxHealth = DOWNED_MAX_HEALTH;
+  fighter.downedShield = DOWNED_PROTECTION_TIME;
+  fighter.invuln = Math.max(fighter.invuln, DOWNED_PROTECTION_TIME);
   fighter.reviveHold = null;
   fighter.pickupHold = null;
   fighter.useHold = null;
@@ -3175,12 +3203,23 @@ function downFighter(fighter, source, storm = false) {
   }
 }
 
+function updateDownedFighter(fighter, dt) {
+  if (!fighter.downed || !fighter.alive) return;
+  fighter.downedTimer += dt;
+  fighter.downedShield = Math.max(0, fighter.downedShield - dt);
+  if (fighter.downedTimer >= DOWNED_DEATH_TIME) {
+    eliminateFighter(fighter, null);
+  }
+}
+
 function reviveFighter(fighter, reviver) {
   if (!fighter || !fighter.alive || !fighter.downed) return;
   fighter.downed = false;
   fighter.health = Math.max(35, fighter.maxHealth * 0.35);
   fighter.shield = 0;
   fighter.downedTimer = 0;
+  fighter.downedHealth = DOWNED_MAX_HEALTH;
+  fighter.downedShield = 0;
   fighter.reviveHold = null;
   fighter.invuln = 1.2;
   spawnHit(fighter.x, fighter.y, "#58f0cf", 18);
@@ -3998,15 +4037,15 @@ function updateHud() {
   const activeItem = getActiveItem(player);
   const weapon = getEquippedWeapon(player);
   const alive = standingFighters().length;
-  ui.healthBar.style.transform = `scaleX(${clamp(player.health / player.maxHealth, 0, 1)})`;
-  ui.shieldBar.style.transform = `scaleX(${clamp(player.shield / player.maxShield, 0, 1)})`;
+  ui.healthBar.style.transform = `scaleX(${clamp(player.downed ? player.downedHealth / player.downedMaxHealth : player.health / player.maxHealth, 0, 1)})`;
+  ui.shieldBar.style.transform = `scaleX(${clamp(player.downed ? player.downedShield / DOWNED_PROTECTION_TIME : player.shield / player.maxShield, 0, 1)})`;
   ui.energyBar.style.transform = `scaleX(${clamp(player.energy / player.maxEnergy, 0, 1)})`;
   ui.aliveCount.textContent = game.teamSize > 1
     ? `${standingEnemyTeams()} equipe${standingEnemyTeams() > 1 ? "s" : ""}`
     : `${alive} vivant${alive > 1 ? "s" : ""}`;
   ui.killCount.textContent = `${player.kills} elim.`;
   if (player.downed) {
-    ui.ammoCount.textContent = "A terre";
+    ui.ammoCount.textContent = `A terre ${Math.ceil(Math.max(0, DOWNED_DEATH_TIME - player.downedTimer))}s`;
   } else if (!activeItem) {
     ui.ammoCount.textContent = "Slot vide";
   } else if (activeItem.kind === "consumable") {
@@ -4071,10 +4110,12 @@ function getHotbarSignature(player) {
 function updatePickupPrompt() {
   const player = game.player;
   if (player.downed) {
+    const secondsLeft = Math.ceil(Math.max(0, DOWNED_DEATH_TIME - player.downedTimer));
+    const shieldText = player.downedShield > 0 ? `Bouclier ${Math.ceil(player.downedShield * 10) / 10}s` : `${secondsLeft}s`;
     ui.pickupPrompt.classList.remove("hidden");
     ui.pickupPrompt.innerHTML = `
-      <div class="pickup-title"><span>Tu es a terre</span><span>Attends un revive</span></div>
-      <div class="pickup-bar"><span style="transform: scaleX(${clamp((player.reviveHold?.progress || 0) / REVIVE_TIME, 0, 1)})"></span></div>
+      <div class="pickup-title"><span>Tu es a terre</span><span>${shieldText}</span></div>
+      <div class="pickup-bar"><span style="transform: scaleX(${clamp(player.downedHealth / player.downedMaxHealth, 0, 1)})"></span></div>
     `;
     return;
   }
@@ -5630,8 +5671,13 @@ function drawFighterBars(fighter) {
   ctx.fillRect(x - 2, y - 1, width + 4, 7);
   ctx.fillStyle = "#65d137";
   ctx.fillStyle = fighter.downed ? "#ff5a66" : "#65d137";
-  ctx.fillRect(x, y + 1, width * clamp(fighter.downed ? 1 : fighter.health / fighter.maxHealth, 0, 1), 3);
-  if (fighter.shield > 0) {
+  ctx.fillRect(x, y + 1, width * clamp(fighter.downed ? fighter.downedHealth / fighter.downedMaxHealth : fighter.health / fighter.maxHealth, 0, 1), 3);
+  if (fighter.downed && fighter.downedShield > 0) {
+    ctx.fillStyle = IO_THEME.ink;
+    ctx.fillRect(x - 2, y - 8, width + 4, 6);
+    ctx.fillStyle = "#58f0cf";
+    ctx.fillRect(x, y - 7, width * clamp(fighter.downedShield / DOWNED_PROTECTION_TIME, 0, 1), 3);
+  } else if (fighter.shield > 0) {
     ctx.fillStyle = IO_THEME.ink;
     ctx.fillRect(x - 2, y - 8, width + 4, 6);
     ctx.fillStyle = "#2787df";
