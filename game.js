@@ -198,12 +198,12 @@ const WEAPONS = {
     label: "Fusil a pompe",
     color: "#ff9b73",
     ammoType: "shotgun",
-    damage: 8,
-    cooldown: 0.58,
+    damage: 11,
+    cooldown: 0.62,
     bulletSpeed: 670,
-    bulletLife: 0.48,
-    spread: 0.34,
-    pellets: 7,
+    bulletLife: 0.42,
+    spread: 0.48,
+    pellets: 9,
     mag: 5,
     reload: 1.5,
   },
@@ -3911,8 +3911,8 @@ function drawWorld() {
   }
   ctx.globalAlpha = 1;
 
-  drawMapFeatures();
   drawRoads();
+  drawMapFeatures();
   drawGrass();
   drawStealthZones();
 
@@ -3951,6 +3951,7 @@ function drawIoGrid() {
 
 function drawRoads() {
   ctx.save();
+  applyRoadExclusions();
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   ctx.strokeStyle = IO_THEME.roadEdge;
@@ -4133,6 +4134,20 @@ function drawRoads() {
   ctx.restore();
 }
 
+function applyRoadExclusions() {
+  if (!game || !game.mapFeatures) return;
+  ctx.beginPath();
+  ctx.rect(-200, -200, WORLD.width + 400, WORLD.height + 400);
+  for (const river of game.mapFeatures.rivers || []) {
+    ctx.rect(river.x - 12, river.y - 12, river.w + 24, river.h + 24);
+  }
+  for (const obstacle of game.obstacles || []) {
+    if (obstacle.type !== "building") continue;
+    ctx.rect(obstacle.x - 34, obstacle.y - 34, obstacle.w + 68, obstacle.h + 68);
+  }
+  ctx.clip("evenodd");
+}
+
 function drawMapFeatures() {
   const features = game.mapFeatures;
   ctx.save();
@@ -4173,6 +4188,7 @@ function drawMapFeatures() {
 function drawStealthZones() {
   const features = game.mapFeatures;
   ctx.save();
+  applyStealthZoneExclusions();
   for (const zone of features.stealthZones) {
     if (zone.type === "field") {
       ctx.fillStyle = "rgba(130, 153, 48, 0.5)";
@@ -4198,6 +4214,40 @@ function drawStealthZones() {
     }
   }
   ctx.restore();
+}
+
+function applyStealthZoneExclusions() {
+  if (!game || !game.mapFeatures) return;
+  ctx.beginPath();
+  ctx.rect(-200, -200, WORLD.width + 400, WORLD.height + 400);
+  for (const road of mapRoadRects()) {
+    ctx.rect(road.x, road.y, road.w, road.h);
+  }
+  for (const river of game.mapFeatures.rivers || []) {
+    ctx.rect(river.x - 10, river.y - 10, river.w + 20, river.h + 20);
+  }
+  for (const bridge of game.mapFeatures.bridges || []) {
+    ctx.rect(bridge.x - 12, bridge.y - 12, bridge.w + 24, bridge.h + 24);
+  }
+  for (const obstacle of game.obstacles || []) {
+    if (obstacle.type !== "building" && obstacle.type !== "wall") continue;
+    ctx.rect(obstacle.x - 10, obstacle.y - 10, obstacle.w + 20, obstacle.h + 20);
+  }
+  ctx.clip("evenodd");
+}
+
+function mapRoadRects() {
+  return [
+    { x: 520, y: 1168, w: 2060, h: 104 },
+    { x: 1468, y: 460, w: 104, h: 1580 },
+    { x: 5800, y: 1138, w: 1860, h: 104 },
+    { x: 6698, y: 480, w: 104, h: 1520 },
+    { x: 920, y: 3478, w: 1700, h: 104 },
+    { x: 1598, y: 2800, w: 104, h: 1520 },
+    { x: 7580, y: 5478, w: 1460, h: 104 },
+    { x: 8138, y: 4820, w: 104, h: 1500 },
+    { x: 3420, y: 8178, w: 1680, h: 104 },
+  ];
 }
 
 function drawGrass() {
@@ -4494,15 +4544,8 @@ function drawPickups() {
     const bob = Math.sin(pickup.pulse) * 4;
     ctx.save();
     ctx.translate(pickup.x, pickup.y + bob);
-    ctx.shadowColor = "transparent";
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = "rgba(255, 255, 255, 0.32)";
-    ctx.strokeStyle = IO_THEME.ink;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(0, 0, 24, 0, TAU);
-    ctx.fill();
-    ctx.stroke();
+    ctx.shadowColor = pickup.color;
+    ctx.shadowBlur = 7;
     ctx.fillStyle = pickup.color;
     ctx.strokeStyle = IO_THEME.ink;
     ctx.lineWidth = 3;
