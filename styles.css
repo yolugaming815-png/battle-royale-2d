@@ -320,6 +320,12 @@ h2 {
     linear-gradient(180deg, rgba(13, 25, 19, 0.95), rgba(5, 10, 8, 0.95));
 }
 
+.mode-card.team {
+  background:
+    linear-gradient(135deg, rgba(88, 240, 207, 0.2), transparent 48%),
+    linear-gradient(180deg, rgba(12, 20, 22, 0.95), rgba(5, 9, 11, 0.95));
+}
+
 .mode-card span {
   font-size: 1.05rem;
   font-weight: 950;

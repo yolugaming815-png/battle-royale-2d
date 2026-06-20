@@ -95,6 +95,15 @@ const GAME_MODES = {
   night: { id: "night", label: "Night Life" },
   extraction: { id: "extraction", label: "Extraction" },
 };
+const TEAM_MODES = {
+  1: { label: "Solo" },
+  2: { label: "Duo" },
+  3: { label: "Trio" },
+  4: { label: "Squad" },
+};
+const PLAYER_TEAM_ID = "player-team";
+const REVIVE_TIME = 4;
+const REVIVE_RANGE = 62;
 const EXTRACTION_BOT_COUNT = 99;
 const EXTRACTION_EXFIL_TIME = 6;
 const DEFAULT_BACKPACK = { label: "Sac leger", rarity: "common", capacity: 4, color: "#b8bec6", price: 80 };
@@ -374,6 +383,8 @@ loadSavedData();
 let view = { width: 0, height: 0, dpr: 1 };
 let game = null;
 let lastGameMode = "normal";
+let lastTeamSize = 1;
+let pendingGameMode = "normal";
 const lockerSelection = new Set();
 let lastFrame = 0;
 
@@ -789,7 +800,7 @@ function resize() {
   canvas.style.height = `${view.height}px`;
 }
 
-function makeFighter(name, x, y, isPlayer = false) {
+function makeFighter(name, x, y, isPlayer = false, options = {}) {
   const weaponKey = "pickaxe";
   const weapon = WEAPONS[weaponKey];
   const hotbar = isPlayer
@@ -802,7 +813,9 @@ function makeFighter(name, x, y, isPlayer = false) {
     y,
     radius: PLAYER_RADIUS,
     isPlayer,
-    color: isPlayer ? (skins.find((skin) => skin.id === profile.skin) || skins[0]).color : pick(["#e83c3c", "#2f91ff", "#43d17b", "#ff8c27", "#8f5bff", "#f0469e"]),
+    isTeammate: Boolean(options.isTeammate),
+    teamId: options.teamId || (isPlayer ? PLAYER_TEAM_ID : makeId("team")),
+    color: options.color || (isPlayer ? (skins.find((skin) => skin.id === profile.skin) || skins[0]).color : pick(["#e83c3c", "#2f91ff", "#43d17b", "#ff8c27", "#8f5bff", "#f0469e"])),
     health: 100,
     maxHealth: 100,
     shield: isPlayer ? 40 : rand(0, 35),
@@ -834,6 +847,9 @@ function makeFighter(name, x, y, isPlayer = false) {
     reload: 0,
     kills: 0,
     alive: true,
+    downed: false,
+    downedTimer: 0,
+    reviveHold: null,
     aim: 0,
     moveX: 0,
     moveY: 0,
@@ -890,26 +906,48 @@ function makeZone() {
   };
 }
 
-function newGame(mode = lastGameMode) {
+function newGame(mode = lastGameMode, teamSize = 1) {
   const selectedMode = GAME_MODES[mode] ? mode : "normal";
+  const selectedTeamSize = clamp(Number(teamSize) || 1, 1, 4);
   resetTouchInput();
   lastGameMode = selectedMode;
+  lastTeamSize = selectedTeamSize;
   profile.games += 1;
   saveData();
   const mapFeatures = makeMapFeatures();
   const obstacles = makeObstacles();
   const chests = makeChests(obstacles);
   const zone = makeZone();
-  const botCount = selectedMode === "extraction" ? EXTRACTION_BOT_COUNT : BOT_COUNT;
+  const totalCount = selectedMode === "extraction" ? EXTRACTION_BOT_COUNT + 1 : BOT_COUNT + 1;
+  const teammateCount = selectedTeamSize - 1;
+  const enemyBotCount = Math.max(0, totalCount - 1 - teammateCount);
   const initialSpawnRadius = Math.min(WORLD.width, WORLD.height) * 0.49;
   const spawnAttempts = selectedMode === "extraction" ? 150 : 1200;
   const botSpawnDistance = selectedMode === "extraction" ? 560 : 840;
   const playerPoint = safeSpawn(obstacles, [], { minDistance: 980, features: mapFeatures, spawnRadius: initialSpawnRadius, attempts: spawnAttempts });
+  const teammates = [];
   const bots = [];
   const names = [...BOT_NAMES].sort(() => Math.random() - 0.5);
 
-  for (let i = 0; i < botCount; i += 1) {
-    const point = safeSpawn(obstacles, [playerPoint, ...bots], { minDistance: botSpawnDistance, features: mapFeatures, spawnRadius: initialSpawnRadius, attempts: spawnAttempts });
+  for (let i = 0; i < teammateCount; i += 1) {
+    const angle = (i / Math.max(1, teammateCount)) * TAU + rand(-0.25, 0.25);
+    const point = findSafePointAround(
+      playerPoint.x + Math.cos(angle) * rand(70, 120),
+      playerPoint.y + Math.sin(angle) * rand(70, 120),
+      PLAYER_RADIUS,
+      obstacles,
+      mapFeatures,
+      28,
+    ) || playerPoint;
+    teammates.push(makeFighter(`Ally ${i + 1}`, point.x, point.y, false, {
+      isTeammate: true,
+      teamId: PLAYER_TEAM_ID,
+      color: ["#58f0cf", "#53a8ff", "#ac7cff"][i % 3],
+    }));
+  }
+
+  for (let i = 0; i < enemyBotCount; i += 1) {
+    const point = safeSpawn(obstacles, [playerPoint, ...teammates, ...bots], { minDistance: botSpawnDistance, features: mapFeatures, spawnRadius: initialSpawnRadius, attempts: spawnAttempts });
     bots.push(makeFighter(names[i] || `Bot ${i + 1}`, point.x, point.y));
   }
 
@@ -917,8 +955,8 @@ function newGame(mode = lastGameMode) {
     state: "playing",
     mode: selectedMode,
     camera: { x: 0, y: 0 },
-    player: makeFighter(profile.name, playerPoint.x, playerPoint.y, true),
-    bots,
+    player: makeFighter(profile.name, playerPoint.x, playerPoint.y, true, { teamId: PLAYER_TEAM_ID }),
+    bots: [...teammates, ...bots],
     bullets: [],
     pickups: makePickups(obstacles, selectedMode === "extraction" ? 260 : 160, mapFeatures),
     chests,
@@ -932,9 +970,10 @@ function newGame(mode = lastGameMode) {
     grass: makeGrass(),
     groundPatches: makeGroundPatches(),
     zone,
-    totalPlayers: botCount + 1,
+    teamSize: selectedTeamSize,
+    totalPlayers: totalCount,
     extractionZones: selectedMode === "extraction" ? makeExtractionZones() : [],
-    placement: botCount + 1,
+    placement: totalCount,
     feed: [],
     elapsed: 0,
     minimapTimer: 0,
@@ -949,7 +988,7 @@ function newGame(mode = lastGameMode) {
   ui.menu.classList.add("hidden");
   ui.gameOver.classList.add("hidden");
   ui.hud.classList.remove("hidden");
-  addFeed(selectedMode === "extraction" ? "Extraction: trouve du stuff puis exfiltre." : selectedMode === "night" ? "Night Life: reste dans la lumiere." : "La partie commence. La zone apparaitra bientot.");
+  addFeed(`${TEAM_MODES[selectedTeamSize].label} - ${selectedMode === "extraction" ? "Extraction: trouve du stuff puis exfiltre." : selectedMode === "night" ? "Night Life: reste dans la lumiere." : "La partie commence. La zone apparaitra bientot."}`);
   if (selectedMode === "night") addFeed("La zone apparaitra bientot.");
   if (selectedMode === "extraction") addFeed("Reste 6s dans une zone verte pour extraire.");
   drawMinimap();
@@ -1803,6 +1842,7 @@ function update(dt) {
   updateZone(dt);
   updatePlayer(dt);
   updateBots(dt);
+  updateRevives(dt);
   updateChests(dt);
   updateBullets(dt);
   updateSmoke(dt);
@@ -1826,6 +1866,13 @@ function updatePlayer(dt) {
   if (!player.alive) return;
 
   tickFighter(player, dt);
+  if (player.downed) {
+    player.moveX = 0;
+    player.moveY = 0;
+    player.useHold = null;
+    applyStormDamage(player, dt);
+    return;
+  }
   const input = readMovementInput();
   player.moveX = input.x;
   player.moveY = input.y;
@@ -1974,6 +2021,12 @@ function updateBots(dt) {
   for (const bot of game.bots) {
     if (!bot.alive) continue;
     tickFighter(bot, dt);
+    if (bot.downed) {
+      bot.moveX = 0;
+      bot.moveY = 0;
+      applyStormDamage(bot, dt);
+      continue;
+    }
     bot.unstuckTimer = Math.max(0, bot.unstuckTimer - dt);
     bot.ignoredGoalTimer = Math.max(0, bot.ignoredGoalTimer - dt);
     if (bot.ignoredGoalTimer === 0) bot.ignoredGoalId = null;
@@ -1981,7 +2034,8 @@ function updateBots(dt) {
     const beforeY = bot.y;
 
     bot.aiTimer -= dt;
-    const defensiveTarget = bot.lastAttacker && bot.lastAttacker.alive && bot.aggroTimer > 0 && distance(bot, bot.lastAttacker) < 920
+    const downedAlly = nearestDownedAlly(bot, 920);
+    const defensiveTarget = bot.lastAttacker && bot.lastAttacker.alive && !bot.lastAttacker.downed && bot.aggroTimer > 0 && distance(bot, bot.lastAttacker) < 920
       ? bot.lastAttacker
       : null;
     const canCloseFight = game.elapsed > BOT_CLOSE_FIGHT_GRACE;
@@ -1996,7 +2050,11 @@ function updateBots(dt) {
     }
     const outsideZone = !insideZone(bot);
 
-    if (outsideZone) {
+    if (downedAlly && !defensiveTarget) {
+      bot.wanderX = downedAlly.x;
+      bot.wanderY = downedAlly.y;
+      setBotGoal(bot, `revive:${downedAlly.id}`, downedAlly);
+    } else if (outsideZone) {
       bot.wanderX = game.zone.x;
       bot.wanderY = game.zone.y;
       setBotGoal(bot, "zone", { x: bot.wanderX, y: bot.wanderY });
@@ -2078,7 +2136,10 @@ function updateBots(dt) {
       startReload(bot);
     }
 
-    if (!target && findPickupUnderFighter(bot)) {
+    if (downedAlly && !defensiveTarget && distance(bot, downedAlly) <= REVIVE_RANGE * 0.78) {
+      speed = 0;
+      bot.path = [];
+    } else if (!target && findPickupUnderFighter(bot)) {
       speed = 0;
       bot.path = [];
     }
@@ -2138,6 +2199,51 @@ function maybeBotDash(bot, moveAngle, destination, target, weapon) {
   } else if (targetDistance > 500 && targetDistance < 820 && Math.random() < 0.25 && pathIsClear(bot, moveAngle, 155)) {
     startDash(bot, Math.cos(moveAngle), Math.sin(moveAngle));
   }
+}
+
+function nearestDownedAlly(fighter, range = 900) {
+  let best = null;
+  let bestDistance = range;
+  for (const ally of downedTeamMembers(fighter.teamId)) {
+    if (ally === fighter) continue;
+    const d = distance(fighter, ally);
+    if (d < bestDistance) {
+      best = ally;
+      bestDistance = d;
+    }
+  }
+  return best;
+}
+
+function updateRevives(dt) {
+  if (!game) return;
+  const downed = aliveFighters().filter((fighter) => fighter.downed);
+  for (const target of downed) {
+    const reviver = bestReviverFor(target);
+    if (!reviver) {
+      target.reviveHold = null;
+      continue;
+    }
+
+    if (!target.reviveHold || target.reviveHold.reviverId !== reviver.id) {
+      target.reviveHold = { reviverId: reviver.id, progress: 0 };
+    }
+    target.reviveHold.progress = Math.min(REVIVE_TIME, target.reviveHold.progress + dt);
+
+    if (target.reviveHold.progress >= REVIVE_TIME) {
+      reviveFighter(target, reviver);
+    }
+  }
+}
+
+function bestReviverFor(target) {
+  const allies = standingTeamMembers(target.teamId).filter((ally) => ally !== target && distance(ally, target) <= REVIVE_RANGE);
+  if (!allies.length) return null;
+  const player = game.player;
+  if (player.alive && !player.downed && sameTeam(player, target) && distance(player, target) <= REVIVE_RANGE) {
+    if (keys.has("KeyE") || touchInput.interact) return player;
+  }
+  return allies.find((ally) => !ally.isPlayer) || null;
 }
 
 function setBotGoal(bot, goalId, destination) {
@@ -2342,6 +2448,8 @@ function findNearestOpponent(fighter, range) {
   const fighters = aliveFighters();
   for (const other of fighters) {
     if (other === fighter || !other.alive) continue;
+    if (other.downed) continue;
+    if (sameTeam(fighter, other)) continue;
     if (isHiddenFrom(fighter, other)) continue;
     if (!canSeeByLight(fighter, other)) continue;
     const d = distance(fighter, other);
@@ -2859,6 +2967,7 @@ function swingMelee(fighter, baseAngle, weapon, rarity = "common") {
 
   for (const target of aliveFighters()) {
     if (target === fighter || target.invuln > 0) continue;
+    if (sameTeam(target, fighter)) continue;
     const targetDistance = distance(fighter, target);
     if (targetDistance > weapon.range + target.radius) continue;
     const delta = Math.abs(angleDifference(angleTo(fighter, target), baseAngle));
@@ -2966,6 +3075,7 @@ function updateBullets(dt) {
 
     for (const fighter of aliveFighters()) {
       if (fighter === bullet.owner || fighter.invuln > 0) continue;
+      if (sameTeam(fighter, bullet.owner)) continue;
       if (Math.hypot(fighter.x - bullet.x, fighter.y - bullet.y) < fighter.radius + bullet.radius) {
         bullet.life = -1;
         damageFighter(fighter, bullet.damage, bullet.owner);
@@ -2994,6 +3104,11 @@ function bulletHitsObstacle(bullet) {
 
 function damageFighter(fighter, amount, source) {
   if (!fighter.alive) return;
+  if (source && source !== fighter && sameTeam(source, fighter)) return;
+  if (fighter.downed) {
+    eliminateFighter(fighter, source);
+    return;
+  }
   if (source && source !== fighter && source.alive) {
     fighter.lastAttacker = source;
     fighter.aggroTimer = 6;
@@ -3013,7 +3128,8 @@ function damageFighter(fighter, amount, source) {
   fighter.health -= remaining;
 
   if (fighter.health <= 0) {
-    eliminateFighter(fighter, source);
+    if (canBeDowned(fighter)) downFighter(fighter, source);
+    else eliminateFighter(fighter, source);
   }
 }
 
@@ -3028,15 +3144,53 @@ function applyArmorMitigation(fighter, amount) {
 
 function damageByStorm(fighter, amount) {
   if (!fighter.alive) return;
+  if (fighter.downed) {
+    eliminateFighter(fighter, null, true);
+    return;
+  }
   fighter.health -= amount;
   if (fighter.health <= 0) {
-    eliminateFighter(fighter, null, true);
+    if (canBeDowned(fighter)) downFighter(fighter, null, true);
+    else eliminateFighter(fighter, null, true);
   }
+}
+
+function downFighter(fighter, source, storm = false) {
+  if (!fighter.alive || fighter.downed) return;
+  fighter.downed = true;
+  fighter.health = 1;
+  fighter.shield = 0;
+  fighter.downedTimer = 0;
+  fighter.reviveHold = null;
+  fighter.pickupHold = null;
+  fighter.useHold = null;
+  fighter.reload = 0;
+  fighter.pendingReload = false;
+  fighter.cooldown = 0;
+  spawnHit(fighter.x, fighter.y, "#ff5a66", 16);
+  addFeed(storm ? `${fighter.name} est a terre dans la zone` : `${fighter.name} est a terre`);
+  if (source && source.alive) {
+    source.lastAttacker = fighter;
+    source.aggroTimer = Math.max(source.aggroTimer, 1.2);
+  }
+}
+
+function reviveFighter(fighter, reviver) {
+  if (!fighter || !fighter.alive || !fighter.downed) return;
+  fighter.downed = false;
+  fighter.health = Math.max(35, fighter.maxHealth * 0.35);
+  fighter.shield = 0;
+  fighter.downedTimer = 0;
+  fighter.reviveHold = null;
+  fighter.invuln = 1.2;
+  spawnHit(fighter.x, fighter.y, "#58f0cf", 18);
+  addFeed(`${reviver.name} a releve ${fighter.name}`);
 }
 
 function eliminateFighter(fighter, source, storm = false) {
   if (!fighter.alive) return;
   fighter.alive = false;
+  fighter.downed = false;
   fighter.health = 0;
   fighter.shield = 0;
   game.placement = aliveFighters().length + 1;
@@ -3054,8 +3208,21 @@ function eliminateFighter(fighter, source, storm = false) {
     addFeed(`${fighter.name} a ete pris par la zone`);
   }
 
+  wipeDownedTeamIfNeeded(fighter.teamId);
+
   if (fighter.isPlayer) {
     endGame(false);
+  }
+}
+
+function wipeDownedTeamIfNeeded(teamId) {
+  if (!teamId || !game || standingTeamMembers(teamId).length) return;
+  for (const ally of downedTeamMembers(teamId)) {
+    ally.alive = false;
+    ally.downed = false;
+    ally.health = 0;
+    dropLoot(ally);
+    if (ally.isPlayer) endGame(false);
   }
 }
 
@@ -3125,6 +3292,10 @@ function collectPickups(fighter) {
 }
 
 function updatePickupHold(fighter, dt) {
+  if (fighter.isPlayer && playerReviveTarget() && (keys.has("KeyE") || touchInput.interact)) {
+    fighter.pickupHold = null;
+    return;
+  }
   const pickup = findPickupUnderFighter(fighter);
   if (!pickup) {
     fighter.pickupHold = null;
@@ -3275,6 +3446,25 @@ function finishPlayerPickup(player, pickup) {
     syncEquippedFromHotbar(player);
   }
   game.pickups = game.pickups.filter((item) => !item.taken);
+}
+
+function sameTeam(a, b) {
+  return Boolean(a && b && a.teamId && b.teamId && a.teamId === b.teamId);
+}
+
+function standingTeamMembers(teamId) {
+  if (!game || !teamId) return [];
+  return aliveFighters().filter((fighter) => fighter.teamId === teamId && !fighter.downed);
+}
+
+function downedTeamMembers(teamId) {
+  if (!game || !teamId) return [];
+  return aliveFighters().filter((fighter) => fighter.teamId === teamId && fighter.downed);
+}
+
+function canBeDowned(fighter) {
+  if (!game || game.teamSize <= 1 || !fighter.teamId) return false;
+  return standingTeamMembers(fighter.teamId).some((ally) => ally !== fighter);
 }
 
 function finishExtractionPickup(player, pickup) {
@@ -3670,16 +3860,27 @@ function aliveFighters() {
   return [game.player, ...game.bots].filter((fighter) => fighter.alive);
 }
 
+function standingFighters() {
+  return aliveFighters().filter((fighter) => !fighter.downed);
+}
+
+function standingEnemyTeams() {
+  const teams = new Set();
+  for (const fighter of standingFighters()) {
+    if (fighter.teamId !== PLAYER_TEAM_ID) teams.add(fighter.teamId || fighter.id);
+  }
+  return teams.size;
+}
+
 function checkVictory() {
   if (game.mode === "extraction") return;
-  const alive = aliveFighters();
-  if (game.player.alive && alive.length === 1) {
+  if (standingTeamMembers(PLAYER_TEAM_ID).length && standingEnemyTeams() === 0) {
     endGame(true);
   }
 }
 
 function updateExtraction(dt) {
-  if (!game || game.mode !== "extraction" || !game.player.alive) return;
+  if (!game || game.mode !== "extraction" || !game.player.alive || game.player.downed) return;
   const player = game.player;
   const zone = game.extractionZones.find((item) => Math.hypot(player.x - item.x, player.y - item.y) <= item.radius);
   if (!zone) {
@@ -3796,13 +3997,17 @@ function updateHud() {
   }
   const activeItem = getActiveItem(player);
   const weapon = getEquippedWeapon(player);
-  const alive = aliveFighters().length;
+  const alive = standingFighters().length;
   ui.healthBar.style.transform = `scaleX(${clamp(player.health / player.maxHealth, 0, 1)})`;
   ui.shieldBar.style.transform = `scaleX(${clamp(player.shield / player.maxShield, 0, 1)})`;
   ui.energyBar.style.transform = `scaleX(${clamp(player.energy / player.maxEnergy, 0, 1)})`;
-  ui.aliveCount.textContent = `${alive} vivant${alive > 1 ? "s" : ""}`;
+  ui.aliveCount.textContent = game.teamSize > 1
+    ? `${standingEnemyTeams()} equipe${standingEnemyTeams() > 1 ? "s" : ""}`
+    : `${alive} vivant${alive > 1 ? "s" : ""}`;
   ui.killCount.textContent = `${player.kills} elim.`;
-  if (!activeItem) {
+  if (player.downed) {
+    ui.ammoCount.textContent = "A terre";
+  } else if (!activeItem) {
     ui.ammoCount.textContent = "Slot vide";
   } else if (activeItem.kind === "consumable") {
     const hold = player.useHold;
@@ -3865,6 +4070,28 @@ function getHotbarSignature(player) {
 
 function updatePickupPrompt() {
   const player = game.player;
+  if (player.downed) {
+    ui.pickupPrompt.classList.remove("hidden");
+    ui.pickupPrompt.innerHTML = `
+      <div class="pickup-title"><span>Tu es a terre</span><span>Attends un revive</span></div>
+      <div class="pickup-bar"><span style="transform: scaleX(${clamp((player.reviveHold?.progress || 0) / REVIVE_TIME, 0, 1)})"></span></div>
+    `;
+    return;
+  }
+
+  const reviveTarget = playerReviveTarget();
+  if (reviveTarget) {
+    const progress = reviveTarget.reviveHold && reviveTarget.reviveHold.reviverId === player.id
+      ? reviveTarget.reviveHold.progress / REVIVE_TIME
+      : 0;
+    ui.pickupPrompt.classList.remove("hidden");
+    ui.pickupPrompt.innerHTML = `
+      <div class="pickup-title"><span>Relever ${reviveTarget.name}</span><span>Maintiens E - ${Math.round(clamp(progress, 0, 1) * 100)}%</span></div>
+      <div class="pickup-bar"><span style="transform: scaleX(${clamp(progress, 0, 1)})"></span></div>
+    `;
+    return;
+  }
+
   const hold = player.pickupHold;
   const pickup = hold ? game.pickups.find((item) => item.id === hold.id) : null;
   const nearbyPickup = game.mode === "extraction" ? findPickupUnderFighter(player) : null;
@@ -3949,6 +4176,13 @@ function renderHotbar() {
     slot.append(key, iconCanvas, name, meta);
     ui.hotbar.appendChild(slot);
   }
+}
+
+function playerReviveTarget() {
+  if (!game || !game.player || game.player.downed) return null;
+  return downedTeamMembers(PLAYER_TEAM_ID)
+    .filter((ally) => ally !== game.player && distance(game.player, ally) <= REVIVE_RANGE)
+    .sort((a, b) => distance(game.player, a) - distance(game.player, b))[0] || null;
 }
 
 function toggleBagPanel(force = null) {
@@ -5345,20 +5579,21 @@ function drawFighter(fighter) {
   const stealthZone = getStealthZoneAt(fighter.x, fighter.y);
   if (stealthZone) ctx.globalAlpha = fighter.isPlayer ? 0.78 : 0.58;
   ctx.translate(fighter.x, fighter.y);
-  ctx.rotate(fighter.aim);
+  ctx.rotate(fighter.downed ? fighter.aim + Math.PI / 2 : fighter.aim);
 
   ctx.fillStyle = "rgba(0, 0, 0, 0.22)";
   ctx.beginPath();
   ctx.ellipse(0, 11, fighter.radius * 0.95, fighter.radius * 0.48, 0, 0, TAU);
   ctx.fill();
 
-  drawHeldItem(fighter);
+  if (!fighter.downed) drawHeldItem(fighter);
 
   ctx.fillStyle = fighter.color;
   ctx.strokeStyle = IO_THEME.ink;
   ctx.lineWidth = fighter.isPlayer ? 5 : 4;
   ctx.beginPath();
-  ctx.arc(0, 0, fighter.radius, 0, TAU);
+  if (fighter.downed) ctx.ellipse(0, 0, fighter.radius * 1.12, fighter.radius * 0.62, 0, 0, TAU);
+  else ctx.arc(0, 0, fighter.radius, 0, TAU);
   ctx.fill();
   ctx.stroke();
 
@@ -5374,14 +5609,14 @@ function drawFighter(fighter) {
 }
 
 function drawFighterName(fighter) {
-  const label = fighter.isPlayer ? "You" : fighter.name;
+  const label = fighter.isPlayer ? "You" : fighter.isTeammate ? `+ ${fighter.name}` : fighter.name;
   ctx.save();
   ctx.font = "900 16px Segoe UI, Inter, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "bottom";
   ctx.lineWidth = 5;
   ctx.strokeStyle = IO_THEME.ink;
-  ctx.fillStyle = IO_THEME.white || "#fff8df";
+  ctx.fillStyle = fighter.downed ? "#ffb3b8" : fighter.isTeammate ? "#bffdf3" : IO_THEME.white || "#fff8df";
   ctx.strokeText(label, fighter.x, fighter.y - fighter.radius - 25);
   ctx.fillText(label, fighter.x, fighter.y - fighter.radius - 25);
   ctx.restore();
@@ -5394,7 +5629,8 @@ function drawFighterBars(fighter) {
   ctx.fillStyle = IO_THEME.ink;
   ctx.fillRect(x - 2, y - 1, width + 4, 7);
   ctx.fillStyle = "#65d137";
-  ctx.fillRect(x, y + 1, width * clamp(fighter.health / fighter.maxHealth, 0, 1), 3);
+  ctx.fillStyle = fighter.downed ? "#ff5a66" : "#65d137";
+  ctx.fillRect(x, y + 1, width * clamp(fighter.downed ? 1 : fighter.health / fighter.maxHealth, 0, 1), 3);
   if (fighter.shield > 0) {
     ctx.fillStyle = IO_THEME.ink;
     ctx.fillRect(x - 2, y - 8, width + 4, 6);
@@ -5408,6 +5644,12 @@ function drawFighterBars(fighter) {
     ctx.fillRect(x - 2, y - 15, width + 4, 6);
     ctx.fillStyle = "#ffe368";
     ctx.fillRect(x, y - 14, width * clamp(progress, 0, 1), 3);
+  }
+  if (fighter.downed && fighter.reviveHold) {
+    ctx.fillStyle = IO_THEME.ink;
+    ctx.fillRect(x - 2, y - 15, width + 4, 6);
+    ctx.fillStyle = "#58f0cf";
+    ctx.fillRect(x, y - 14, width * clamp(fighter.reviveHold.progress / REVIVE_TIME, 0, 1), 3);
   }
 }
 
@@ -5771,6 +6013,11 @@ function loop(time) {
   requestAnimationFrame(loop);
 }
 
+function chooseGameMode(mode) {
+  pendingGameMode = GAME_MODES[mode] ? mode : "normal";
+  showMenuTab("teamModes");
+}
+
 function resetTouchInput() {
   touchInput.movePointerId = null;
   touchInput.aimPointerId = null;
@@ -6016,10 +6263,13 @@ ui.showMinimapToggle.addEventListener("change", () => {
 });
 
 ui.playButton.addEventListener("click", () => showMenuTab("modes"));
-ui.normalModeButton.addEventListener("click", () => newGame("normal"));
-ui.nightModeButton.addEventListener("click", () => newGame("night"));
-ui.extractionModeButton.addEventListener("click", () => newGame("extraction"));
-ui.retryButton.addEventListener("click", () => newGame(lastGameMode));
+ui.normalModeButton.addEventListener("click", () => chooseGameMode("normal"));
+ui.nightModeButton.addEventListener("click", () => chooseGameMode("night"));
+ui.extractionModeButton.addEventListener("click", () => chooseGameMode("extraction"));
+document.querySelectorAll("[data-team-size]").forEach((button) => {
+  button.addEventListener("click", () => newGame(pendingGameMode, Number(button.dataset.teamSize) || 1));
+});
+ui.retryButton.addEventListener("click", () => newGame(lastGameMode, lastTeamSize));
 ui.menuButton.addEventListener("click", showMenu);
 ui.sellLockerButton.addEventListener("click", sellSelectedLockerItems);
 ui.equipExtractionButton.addEventListener("click", equipSelectedForExtraction);
