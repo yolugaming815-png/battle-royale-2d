@@ -3929,14 +3929,16 @@ function renderBagPanel() {
     equip.type = "button";
     equip.textContent = "Equiper";
     equip.disabled = item.kind === "valuable";
-    equip.addEventListener("click", (event) => {
+    equip.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
       event.stopPropagation();
       equipBagIndex(index);
     });
     const drop = document.createElement("button");
     drop.type = "button";
     drop.textContent = "Jeter";
-    drop.addEventListener("click", (event) => {
+    drop.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
       event.stopPropagation();
       dropBagIndex(index);
     });
@@ -5808,7 +5810,8 @@ ui.retryButton.addEventListener("click", () => newGame(lastGameMode));
 ui.menuButton.addEventListener("click", showMenu);
 ui.sellLockerButton.addEventListener("click", sellSelectedLockerItems);
 ui.equipExtractionButton.addEventListener("click", equipSelectedForExtraction);
-ui.bagCloseButton.addEventListener("click", (event) => {
+ui.bagCloseButton.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
   event.stopPropagation();
   toggleBagPanel(false);
 });
