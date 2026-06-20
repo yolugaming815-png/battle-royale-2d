@@ -3531,7 +3531,7 @@ function stashEntryFromItem(item) {
       : item.kind === "armor" ? ARMORS[item.type].price
         : item.kind === "weapon" ? Math.round(120 + weaponScore(item.type, item.rarity) * 6)
           : 60;
-  return { label, color, price, kind: item.kind, type: item.type };
+  return { label, color, price, kind: item.kind, type: item.type, rarity: item.rarity };
 }
 
 function endGame(won, details = {}) {
@@ -3767,6 +3767,62 @@ function drawHotbarIcon(canvasElement, item) {
     drawWeaponSilhouette(icon, item.type, itemColor(item), 1.12, { label: true });
   } else if (item.kind === "consumable") {
     drawConsumableHotbarIcon(icon, item.type);
+  } else {
+    drawStashIcon(icon, item);
+  }
+
+  icon.restore();
+}
+
+function drawStashIcon(icon, item) {
+  const color = itemColor(item);
+  icon.save();
+  icon.shadowBlur = 0;
+  icon.lineWidth = 4;
+  icon.strokeStyle = "rgba(4, 7, 10, 0.78)";
+  icon.fillStyle = color;
+
+  if (item.kind === "backpack") {
+    fillRoundRect(icon, -18, -20, 36, 40, 7, color);
+    icon.strokeRect(-18, -20, 36, 40);
+    icon.fillStyle = "rgba(0,0,0,0.26)";
+    icon.fillRect(-11, -8, 22, 13);
+    icon.strokeStyle = "rgba(4,7,8,0.75)";
+    icon.beginPath();
+    icon.arc(-10, -20, 8, Math.PI, TAU);
+    icon.arc(10, -20, 8, Math.PI, TAU);
+    icon.stroke();
+  } else if (item.kind === "armor") {
+    const armor = ARMORS[item.type];
+    icon.beginPath();
+    if (armor && armor.slot === "helmet") {
+      icon.arc(0, 1, 20, Math.PI, 0);
+      icon.lineTo(20, 11);
+      icon.lineTo(-20, 11);
+    } else {
+      icon.moveTo(0, -22);
+      icon.lineTo(20, -10);
+      icon.lineTo(14, 18);
+      icon.lineTo(0, 24);
+      icon.lineTo(-14, 18);
+      icon.lineTo(-20, -10);
+    }
+    icon.closePath();
+    icon.fill();
+    icon.stroke();
+  } else if (item.kind === "valuable") {
+    icon.beginPath();
+    icon.moveTo(0, -22);
+    icon.lineTo(20, 0);
+    icon.lineTo(0, 22);
+    icon.lineTo(-20, 0);
+    icon.closePath();
+    icon.fill();
+    icon.stroke();
+    icon.fillStyle = "rgba(255,255,255,0.36)";
+    icon.beginPath();
+    icon.arc(-5, -6, 5, 0, TAU);
+    icon.fill();
   }
 
   icon.restore();
@@ -5227,14 +5283,39 @@ function renderProfile() {
 function renderLocker() {
   if (!ui.lockerGrid) return;
   ui.creditsCount.textContent = `${profile.credits} credits`;
-  ui.lockerGrid.innerHTML = profile.stash.length
-    ? profile.stash.map((item) => `
-      <div class="locker-item" style="--rarity:${item.color}">
-        ${item.label}
-        <small>${item.price} credits</small>
-      </div>
-    `).join("")
-    : `<div class="locker-item" style="--rarity:#b8bec6">Casier vide<small>Extrais-toi avec du loot pour le remplir.</small></div>`;
+  ui.lockerGrid.innerHTML = "";
+
+  if (!profile.stash.length) {
+    const empty = document.createElement("div");
+    empty.className = "locker-item locker-empty";
+    empty.style.setProperty("--rarity", "#b8bec6");
+    empty.innerHTML = `<strong>Casier vide</strong><small>Extrais-toi avec du loot pour le remplir.</small>`;
+    ui.lockerGrid.appendChild(empty);
+    return;
+  }
+
+  for (const item of profile.stash) {
+    const card = document.createElement("div");
+    card.className = "locker-item";
+    card.style.setProperty("--rarity", item.color || itemColor(item));
+
+    const iconCanvas = document.createElement("canvas");
+    iconCanvas.className = "locker-icon";
+    iconCanvas.width = 96;
+    iconCanvas.height = 72;
+    drawHotbarIcon(iconCanvas, item);
+
+    const text = document.createElement("div");
+    text.className = "locker-info";
+    const name = document.createElement("strong");
+    name.textContent = item.label || itemLabel(item);
+    const meta = document.createElement("small");
+    meta.textContent = `${item.price || 0} credits`;
+    text.append(name, meta);
+
+    card.append(iconCanvas, text);
+    ui.lockerGrid.appendChild(card);
+  }
 }
 
 function renderSkins() {
