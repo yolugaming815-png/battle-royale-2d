@@ -3306,13 +3306,20 @@ function addItemToBag(player, item) {
 function equipBagItem(player, item, options = {}) {
   if (!item) return false;
   if (item.kind === "weapon" || item.kind === "consumable") {
-    const slot = firstEmptyHotbarSlot(player);
-    if (slot === -1) {
-      if (!options.silent) addFeed("Hotbar pleine");
+    const emptySlot = firstEmptyHotbarSlot(player);
+    const slot = emptySlot === -1 ? player.activeSlot : emptySlot;
+    const oldItem = player.hotbar[slot];
+    if (oldItem && oldItem.kind === "weapon" && oldItem.type === "pickaxe") {
+      if (!options.silent) addFeed("Selectionne un slot a remplacer");
       return false;
     }
+    if (oldItem && !addItemToBag(player, oldItem)) return false;
     player.hotbar[slot] = item;
-    if (!options.silent) addFeed(`${itemLabel(item)} equipe`);
+    if (!options.silent) {
+      addFeed(oldItem
+        ? `${itemLabel(item)} equipe, ${itemLabel(oldItem)} dans le sac`
+        : `${itemLabel(item)} equipe slot ${slot + 1}`);
+    }
     syncEquippedFromHotbar(player);
     return true;
   }
@@ -3922,11 +3929,17 @@ function renderBagPanel() {
     equip.type = "button";
     equip.textContent = "Equiper";
     equip.disabled = item.kind === "valuable";
-    equip.addEventListener("click", () => equipBagIndex(index));
+    equip.addEventListener("click", (event) => {
+      event.stopPropagation();
+      equipBagIndex(index);
+    });
     const drop = document.createElement("button");
     drop.type = "button";
     drop.textContent = "Jeter";
-    drop.addEventListener("click", () => dropBagIndex(index));
+    drop.addEventListener("click", (event) => {
+      event.stopPropagation();
+      dropBagIndex(index);
+    });
     actions.append(equip, drop);
 
     card.append(iconCanvas, info, actions);
@@ -3939,11 +3952,12 @@ function equipBagIndex(index) {
   const player = game.player;
   const item = player.extractionBag[index];
   if (!item) return;
+  player.extractionBag.splice(index, 1);
   if (!equipBagItem(player, item)) {
+    player.extractionBag.splice(index, 0, item);
     renderBagPanel();
     return;
   }
-  player.extractionBag.splice(index, 1);
   game.hotbarSignature = "";
   renderHotbar();
   renderBagPanel();
@@ -5794,7 +5808,10 @@ ui.retryButton.addEventListener("click", () => newGame(lastGameMode));
 ui.menuButton.addEventListener("click", showMenu);
 ui.sellLockerButton.addEventListener("click", sellSelectedLockerItems);
 ui.equipExtractionButton.addEventListener("click", equipSelectedForExtraction);
-ui.bagCloseButton.addEventListener("click", () => toggleBagPanel(false));
+ui.bagCloseButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleBagPanel(false);
+});
 
 ui.volumeSlider.value = settings.volume;
 ui.showMinimapToggle.checked = settings.showMinimap;
