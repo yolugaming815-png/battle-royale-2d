@@ -2383,6 +2383,12 @@ function canPickup(fighter, pickup) {
   if (fighter.isPlayer) {
     if (game.mode !== "extraction") return true;
     if (pickup.kind === "ammo" || pickup.kind === "material") return true;
+    if (pickup.kind === "backpack") {
+      return backpackIsBetter(fighter, pickup.type) || fighter.extractionBag.length < fighter.backpack.capacity;
+    }
+    if (pickup.kind === "weapon" || pickup.kind === "consumable") {
+      return firstEmptyHotbarSlot(fighter) !== -1 || fighter.extractionBag.length < fighter.backpack.capacity;
+    }
     return fighter.extractionBag.length < fighter.backpack.capacity;
   }
 
@@ -3164,14 +3170,7 @@ function finishPlayerPickup(player, pickup) {
   }
 
   if (game.mode === "extraction") {
-    const item = pickupToItem(pickup);
-    if (!item) return;
-    if (!addItemToBag(player, item)) return;
-    pickup.taken = true;
-    spawnPickupBurst(pickup);
-    addFeed(`${itemLabel(item)} range dans le sac`);
-    game.pickups = game.pickups.filter((item) => !item.taken);
-    renderBagPanel();
+    finishExtractionPickup(player, pickup);
     return;
   }
 
@@ -3256,6 +3255,50 @@ function finishPlayerPickup(player, pickup) {
     syncEquippedFromHotbar(player);
   }
   game.pickups = game.pickups.filter((item) => !item.taken);
+}
+
+function finishExtractionPickup(player, pickup) {
+  const item = pickupToItem(pickup);
+  if (!item) return;
+
+  if (pickup.kind === "backpack" && backpackIsBetter(player, pickup.type)) {
+    const oldKey = player.backpackKey;
+    player.backpack = { ...BACKPACKS[pickup.type] };
+    player.backpackKey = pickup.type;
+    pickup.taken = true;
+    spawnPickupBurst(pickup);
+    addFeed(`${player.backpack.label} equipe`);
+    if (oldKey && oldKey !== "default") dropExtractionItem({ kind: "backpack", type: oldKey }, pickup.x, pickup.y);
+    game.pickups = game.pickups.filter((drop) => !drop.taken);
+    renderBagPanel();
+    return;
+  }
+
+  if (pickup.kind === "weapon" || pickup.kind === "consumable") {
+    const emptySlot = firstEmptyHotbarSlot(player);
+    if (emptySlot !== -1) {
+      player.hotbar[emptySlot] = item;
+      pickup.taken = true;
+      spawnPickupBurst(pickup);
+      addFeed(`${itemLabel(item)} ajoute au slot ${emptySlot + 1}`);
+      if (emptySlot === player.activeSlot) {
+        player.reload = 0;
+        player.pendingReload = false;
+        syncEquippedFromHotbar(player);
+      }
+      game.hotbarSignature = "";
+      game.pickups = game.pickups.filter((drop) => !drop.taken);
+      renderHotbar();
+      return;
+    }
+  }
+
+  if (!addItemToBag(player, item)) return;
+  pickup.taken = true;
+  spawnPickupBurst(pickup);
+  addFeed(`${itemLabel(item)} range dans le sac`);
+  game.pickups = game.pickups.filter((drop) => !drop.taken);
+  renderBagPanel();
 }
 
 function finishBotPickup(bot, pickup) {
@@ -3349,6 +3392,12 @@ function equipBagItem(player, item, options = {}) {
 
   if (!options.silent) addFeed("Objet stocke, pas equipable");
   return false;
+}
+
+function backpackIsBetter(fighter, backpackType) {
+  const next = BACKPACKS[backpackType];
+  if (!next) return false;
+  return rarityScore(next.rarity) > rarityScore(fighter.backpack.rarity);
 }
 
 function lockerItemToGameItem(item) {
