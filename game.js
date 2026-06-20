@@ -38,6 +38,9 @@ const ui = {
   materials: document.querySelector("#materials"),
   pickupPrompt: document.querySelector("#pickupPrompt"),
   hotbar: document.querySelector("#hotbar"),
+  touchControls: document.querySelector("#touchControls"),
+  touchJoystick: document.querySelector("#touchJoystick"),
+  touchJoystickKnob: document.querySelector("#touchJoystickKnob"),
   leaderboard: document.querySelector("#leaderboard"),
   feed: document.querySelector("#feed"),
   resultTag: document.querySelector("#resultTag"),
@@ -268,6 +271,17 @@ const mouse = {
   worldX: WORLD.width / 2,
   worldY: WORLD.height / 2,
   down: false,
+};
+const touchInput = {
+  movePointerId: null,
+  aimPointerId: null,
+  moveX: 0,
+  moveY: 0,
+  aimX: 1,
+  aimY: 0,
+  aiming: false,
+  firing: false,
+  interact: false,
 };
 
 const profile = {
@@ -878,6 +892,7 @@ function makeZone() {
 
 function newGame(mode = lastGameMode) {
   const selectedMode = GAME_MODES[mode] ? mode : "normal";
+  resetTouchInput();
   lastGameMode = selectedMode;
   profile.games += 1;
   saveData();
@@ -1814,7 +1829,9 @@ function updatePlayer(dt) {
   const input = readMovementInput();
   player.moveX = input.x;
   player.moveY = input.y;
-  player.aim = Math.atan2(mouse.worldY - player.y, mouse.worldX - player.x);
+  player.aim = touchInput.aiming
+    ? Math.atan2(touchInput.aimY, touchInput.aimX)
+    : Math.atan2(mouse.worldY - player.y, mouse.worldX - player.x);
 
   if (isActionPressed("dash")) {
     startDash(player, input.x, input.y);
@@ -1834,7 +1851,7 @@ function updatePlayer(dt) {
 
   moveFighter(player, moveX * speed * dt, moveY * speed * dt);
 
-  const actionPressed = mouse.down || keys.has("Space");
+  const actionPressed = mouse.down || keys.has("Space") || touchInput.firing;
   const activeItem = getActiveItem(player);
 
   if (activeItem && activeItem.kind === "consumable") {
@@ -1860,12 +1877,15 @@ function readMovementInput() {
   if (isActionPressed("right")) x += 1;
   if (isActionPressed("up")) y -= 1;
   if (isActionPressed("down")) y += 1;
+  x += touchInput.moveX;
+  y += touchInput.moveY;
 
   const length = Math.hypot(x, y) || 1;
   return { x: x / length, y: y / length };
 }
 
 function isActionPressed(action) {
+  if (action === "dash" && touchInput.dash) return true;
   return (settings.keybinds[action] || []).some((code) => keys.has(code));
 }
 
@@ -3110,7 +3130,7 @@ function updatePickupHold(fighter, dt) {
     fighter.pickupHold = null;
     return;
   }
-  if (fighter.isPlayer && game.mode === "extraction" && !keys.has("KeyE")) {
+  if (fighter.isPlayer && game.mode === "extraction" && !keys.has("KeyE") && !touchInput.interact) {
     fighter.pickupHold = null;
     return;
   }
@@ -3707,6 +3727,7 @@ function endGame(won, details = {}) {
   profile.kills += game.player.kills;
   saveData();
   renderProfile();
+  resetTouchInput();
   ui.hud.classList.add("hidden");
   ui.gameOver.classList.remove("hidden");
   ui.resultTag.textContent = details.extracted ? "extraction reussie" : won ? "victoire royale" : `top ${game.placement}`;
@@ -3919,6 +3940,12 @@ function renderHotbar() {
         : item && item.kind === "weapon"
           ? "melee"
           : "";
+    slot.addEventListener("pointerdown", (event) => {
+      if (!game || game.state !== "playing") return;
+      event.preventDefault();
+      event.stopPropagation();
+      switchHotbarSlot(i);
+    });
     slot.append(key, iconCanvas, name, meta);
     ui.hotbar.appendChild(slot);
   }
@@ -5528,6 +5555,7 @@ function drawMinimap() {
 function showMenu() {
   game = null;
   mouse.down = false;
+  resetTouchInput();
   ui.hud.classList.add("hidden");
   ui.gameOver.classList.add("hidden");
   ui.menu.classList.remove("hidden");
@@ -5743,6 +5771,81 @@ function loop(time) {
   requestAnimationFrame(loop);
 }
 
+function resetTouchInput() {
+  touchInput.movePointerId = null;
+  touchInput.aimPointerId = null;
+  touchInput.moveX = 0;
+  touchInput.moveY = 0;
+  touchInput.aiming = false;
+  touchInput.firing = false;
+  touchInput.interact = false;
+  touchInput.dash = false;
+  if (ui.touchJoystickKnob) {
+    ui.touchJoystickKnob.style.transform = "translate(-50%, -50%)";
+  }
+}
+
+function updateTouchJoystick(event) {
+  if (!ui.touchJoystick || touchInput.movePointerId !== event.pointerId) return;
+  const rect = ui.touchJoystick.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  const radius = rect.width * 0.42;
+  const dx = event.clientX - cx;
+  const dy = event.clientY - cy;
+  const distance = Math.hypot(dx, dy);
+  const strength = Math.min(1, distance / radius);
+  const angle = Math.atan2(dy, dx);
+  touchInput.moveX = Math.cos(angle) * strength;
+  touchInput.moveY = Math.sin(angle) * strength;
+  const knobX = Math.cos(angle) * radius * strength;
+  const knobY = Math.sin(angle) * radius * strength;
+  ui.touchJoystickKnob.style.transform = `translate(calc(-50% + ${knobX}px), calc(-50% + ${knobY}px))`;
+}
+
+function updateTouchAim(event) {
+  if (!game || !game.player || touchInput.aimPointerId !== event.pointerId) return;
+  const worldX = event.clientX + game.camera.x;
+  const worldY = event.clientY + game.camera.y;
+  const dx = worldX - game.player.x;
+  const dy = worldY - game.player.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 8) return;
+  touchInput.aimX = dx / length;
+  touchInput.aimY = dy / length;
+  touchInput.aiming = true;
+  mouse.x = event.clientX;
+  mouse.y = event.clientY;
+  mouse.worldX = worldX;
+  mouse.worldY = worldY;
+}
+
+function releaseTouchPointer(pointerId) {
+  if (touchInput.movePointerId === pointerId) {
+    touchInput.movePointerId = null;
+    touchInput.moveX = 0;
+    touchInput.moveY = 0;
+    if (ui.touchJoystickKnob) ui.touchJoystickKnob.style.transform = "translate(-50%, -50%)";
+  }
+  if (touchInput.aimPointerId === pointerId) {
+    touchInput.aimPointerId = null;
+    touchInput.firing = false;
+  }
+}
+
+function handleTouchAction(action, active) {
+  if (!game || game.state !== "playing") return;
+  if (action === "fire") touchInput.firing = active;
+  if (action === "dash") touchInput.dash = active;
+  if (action === "interact") touchInput.interact = active;
+  if (!active) return;
+  if (action === "reload") startReload(game.player);
+  if (action === "build") tryBuildWall(game.player);
+  if (action === "bag" && game.mode === "extraction") toggleBagPanel();
+  if (action === "material") cycleBuildMaterial(game.player);
+  if (action === "slot") switchHotbarSlot((game.player.activeSlot + 1) % HOTBAR_SIZE);
+}
+
 window.addEventListener("resize", resize);
 window.addEventListener("keydown", (event) => {
   if (settings.waitingBind) {
@@ -5778,11 +5881,25 @@ window.addEventListener("keyup", (event) => {
 });
 
 canvas.addEventListener("pointermove", (event) => {
+  if (event.pointerType === "touch") {
+    event.preventDefault();
+    updateTouchAim(event);
+    return;
+  }
   mouse.x = event.clientX;
   mouse.y = event.clientY;
 });
 
 canvas.addEventListener("pointerdown", (event) => {
+  if (event.pointerType === "touch") {
+    if (!game || game.state !== "playing") return;
+    event.preventDefault();
+    canvas.setPointerCapture(event.pointerId);
+    touchInput.aimPointerId = event.pointerId;
+    touchInput.firing = true;
+    updateTouchAim(event);
+    return;
+  }
   if (game && game.state === "playing") {
     if (event.button === 2) {
       event.preventDefault();
@@ -5805,12 +5922,59 @@ canvas.addEventListener("contextmenu", (event) => {
   event.preventDefault();
 });
 
-canvas.addEventListener("pointerup", () => {
+canvas.addEventListener("pointerup", (event) => {
+  releaseTouchPointer(event.pointerId);
   mouse.down = false;
 });
 
-canvas.addEventListener("pointercancel", () => {
+canvas.addEventListener("pointercancel", (event) => {
+  releaseTouchPointer(event.pointerId);
   mouse.down = false;
+});
+
+canvas.addEventListener("lostpointercapture", (event) => {
+  releaseTouchPointer(event.pointerId);
+});
+
+if (ui.touchJoystick) {
+  ui.touchJoystick.addEventListener("pointerdown", (event) => {
+    if (!game || game.state !== "playing") return;
+    event.preventDefault();
+    event.stopPropagation();
+    ui.touchJoystick.setPointerCapture(event.pointerId);
+    touchInput.movePointerId = event.pointerId;
+    updateTouchJoystick(event);
+  });
+
+  ui.touchJoystick.addEventListener("pointermove", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    updateTouchJoystick(event);
+  });
+
+  ["pointerup", "pointercancel", "lostpointercapture"].forEach((type) => {
+    ui.touchJoystick.addEventListener(type, (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      releaseTouchPointer(event.pointerId);
+    });
+  });
+}
+
+document.querySelectorAll("[data-touch-action]").forEach((button) => {
+  button.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    button.setPointerCapture(event.pointerId);
+    handleTouchAction(button.dataset.touchAction, true);
+  });
+  ["pointerup", "pointercancel", "lostpointercapture"].forEach((type) => {
+    button.addEventListener(type, (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      handleTouchAction(button.dataset.touchAction, false);
+    });
+  });
 });
 
 canvas.addEventListener("wheel", (event) => {
