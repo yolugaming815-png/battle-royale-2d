@@ -4520,6 +4520,7 @@ function render() {
   drawSmoke(true);
   drawParticles();
   ctx.restore();
+  drawTeammateIndicators();
 }
 
 function drawMenuBackdrop() {
@@ -5639,6 +5640,61 @@ function drawFighters() {
   }
 }
 
+function drawTeammateIndicators() {
+  if (!game || !game.player || game.teamSize <= 1) return;
+  const player = game.player;
+  const margin = 38;
+  const teammates = aliveFighters().filter((fighter) => fighter.isTeammate);
+
+  ctx.save();
+  ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
+  for (const ally of teammates) {
+    const sx = ally.x - game.camera.x;
+    const sy = ally.y - game.camera.y;
+    const onScreen = sx > 42 && sx < view.width - 42 && sy > 42 && sy < view.height - 42;
+    if (onScreen && !ally.downed) continue;
+
+    const dx = ally.x - player.x;
+    const dy = ally.y - player.y;
+    const angle = Math.atan2(dy, dx);
+    const edgeX = clamp(view.width / 2 + Math.cos(angle) * view.width, margin, view.width - margin);
+    const edgeY = clamp(view.height / 2 + Math.sin(angle) * view.height, margin + 10, view.height - margin - 46);
+    const distanceMeters = Math.max(1, Math.round(Math.hypot(dx, dy) / 10));
+    const color = ally.downed ? "#ff5a66" : "#58f0cf";
+
+    ctx.save();
+    ctx.translate(edgeX, edgeY);
+    ctx.rotate(angle);
+    ctx.fillStyle = color;
+    ctx.strokeStyle = IO_THEME.ink;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(18, 0);
+    ctx.lineTo(-10, -11);
+    ctx.lineTo(-5, 0);
+    ctx.lineTo(-10, 11);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.font = "900 12px Segoe UI, Inter, sans-serif";
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = IO_THEME.ink;
+    ctx.fillStyle = color;
+    const label = ally.downed ? `${ally.name} A TERRE` : ally.name;
+    const textY = edgeY + 18;
+    ctx.strokeText(label, edgeX, textY);
+    ctx.fillText(label, edgeX, textY);
+    ctx.font = "850 11px Segoe UI, Inter, sans-serif";
+    ctx.strokeText(`${distanceMeters}m`, edgeX, textY + 14);
+    ctx.fillText(`${distanceMeters}m`, edgeX, textY + 14);
+  }
+  ctx.restore();
+}
+
 function drawFighter(fighter) {
   ctx.save();
   const stealthZone = getStealthZoneAt(fighter.x, fighter.y);
@@ -5844,13 +5900,12 @@ function drawMinimap() {
     }
   }
 
-  for (const fighter of aliveFighters()) {
-    if (!fighter.isPlayer && distance(fighter, game.player) > 1400) continue;
-    mini.fillStyle = fighter.color;
+  for (const fighter of aliveFighters().filter((item) => item.isPlayer || item.isTeammate)) {
+    mini.fillStyle = fighter.downed ? "#ff5a66" : fighter.isPlayer ? IO_THEME.white : "#58f0cf";
     mini.strokeStyle = IO_THEME.ink;
     mini.lineWidth = fighter.isPlayer ? 2 : 1;
     mini.beginPath();
-    mini.arc(fighter.x * sx, fighter.y * sy, fighter.isPlayer ? 4.2 : 2.8, 0, TAU);
+    mini.arc(fighter.x * sx, fighter.y * sy, fighter.isPlayer ? 4.2 : 3.5, 0, TAU);
     mini.fill();
     mini.stroke();
   }
