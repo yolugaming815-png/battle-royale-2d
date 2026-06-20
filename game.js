@@ -915,7 +915,7 @@ function makeZone() {
 
 function newGame(mode = lastGameMode, teamSize = 1) {
   const selectedMode = GAME_MODES[mode] ? mode : "normal";
-  const selectedTeamSize = clamp(Number(teamSize) || 1, 1, 4);
+  const selectedTeamSize = Math.round(clamp(Number(teamSize) || 1, 1, 4));
   resetTouchInput();
   lastGameMode = selectedMode;
   lastTeamSize = selectedTeamSize;
@@ -953,9 +953,33 @@ function newGame(mode = lastGameMode, teamSize = 1) {
     }));
   }
 
-  for (let i = 0; i < enemyBotCount; i += 1) {
-    const point = safeSpawn(obstacles, [playerPoint, ...teammates, ...bots], { minDistance: botSpawnDistance, features: mapFeatures, spawnRadius: initialSpawnRadius, attempts: spawnAttempts });
-    bots.push(makeFighter(names[i] || `Bot ${i + 1}`, point.x, point.y));
+  for (let i = 0; i < enemyBotCount;) {
+    const enemyTeamId = selectedTeamSize > 1 ? makeId("enemy-team") : makeId("team");
+    const enemyTeamNumber = Math.floor(i / selectedTeamSize) + 1;
+    const anchor = safeSpawn(obstacles, [playerPoint, ...teammates, ...bots], { minDistance: botSpawnDistance, features: mapFeatures, spawnRadius: initialSpawnRadius, attempts: spawnAttempts });
+    const membersLeft = enemyBotCount - i;
+    const membersInTeam = selectedTeamSize > 1 ? Math.min(selectedTeamSize, membersLeft) : 1;
+
+    for (let member = 0; member < membersInTeam; member += 1) {
+      const angle = (member / Math.max(1, membersInTeam)) * TAU + rand(-0.3, 0.3);
+      const point = member === 0
+        ? anchor
+        : findSafePointAround(
+          anchor.x + Math.cos(angle) * rand(65, 130),
+          anchor.y + Math.sin(angle) * rand(65, 130),
+          PLAYER_RADIUS,
+          obstacles,
+          mapFeatures,
+          24,
+        ) || anchor;
+      const name = selectedTeamSize > 1
+        ? `Team ${enemyTeamNumber}-${member + 1}`
+        : names[i] || `Bot ${i + 1}`;
+      bots.push(makeFighter(name, point.x, point.y, false, {
+        teamId: enemyTeamId,
+      }));
+      i += 1;
+    }
   }
 
   game = {
