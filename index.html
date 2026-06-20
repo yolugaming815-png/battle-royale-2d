@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Battle Royale 2D .io</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <canvas id="game" aria-label="Battle Royale 2D vue du dessus"></canvas>
+
+    <div id="hud" class="hud hidden">
+      <div class="bars" aria-hidden="true">
+        <div class="bar health"><span id="healthBar"></span></div>
+        <div class="bar shield"><span id="shieldBar"></span></div>
+        <div class="bar energy"><span id="energyBar"></span></div>
+      </div>
+      <div class="stats">
+        <span id="aliveCount">32 vivants</span>
+        <span id="killCount">0 elim.</span>
+        <span id="ammoCount">0/0</span>
+        <span id="zoneTimer">Zone 0:00</span>
+      </div>
+      <div id="materials" class="materials" aria-label="Materiaux"></div>
+      <div id="pickupPrompt" class="pickup-prompt hidden"></div>
+      <div id="hotbar" class="hotbar" aria-label="Barre d'inventaire"></div>
+      <canvas id="minimap" width="156" height="156" aria-label="Mini-carte"></canvas>
+      <div id="feed" class="feed" aria-live="polite"></div>
+    </div>
+
+    <section id="menu" class="screen menu-screen">
+      <nav class="menu-bar" aria-label="Menu principal">
+        <button type="button" data-menu-tab="skins">Skins</button>
+        <button type="button" data-menu-tab="shop">Boutique</button>
+        <button type="button" data-menu-tab="locker">Casier</button>
+        <button type="button" data-menu-tab="profile">Profil</button>
+        <button type="button" data-menu-tab="friends">Amis</button>
+      </nav>
+
+      <div class="panel menu-panel">
+        <p class="eyebrow">top-down .io</p>
+        <h1>Battle Royale 2D</h1>
+        <p class="lead">Survis, loot, ouvre des coffres, traverse les maisons et cache-toi dans les hautes herbes.</p>
+
+        <div class="player-card">
+          <span id="playerName">Joueur</span>
+          <button id="renameButton" type="button">Rename</button>
+        </div>
+
+        <div class="menu-actions">
+          <button id="playButton" type="button">Jouer</button>
+          <button id="settingsButton" type="button" data-menu-tab="settings">Parametre</button>
+        </div>
+
+        <div id="menuPanels" class="menu-panels">
+          <div class="menu-tab active" data-menu-panel="home">
+            <div class="controls">
+              <span>ZQSD / WASD / fleches</span>
+              <span>Souris pour viser</span>
+              <span>Clic ou espace pour tirer</span>
+              <span>Clic droit pour construire</span>
+              <span>X pour changer de materiau</span>
+              <span>Molette pour changer de slot</span>
+              <span>Reste sur le loot pour le prendre</span>
+              <span>Ouvre les coffres des structures</span>
+              <span>Entre dans les maisons</span>
+              <span>Buissons/champs cachent a distance</span>
+            </div>
+          </div>
+
+          <div class="menu-tab" data-menu-panel="modes">
+            <div class="mode-grid">
+              <button id="normalModeButton" class="mode-card" type="button">
+                <span>Mode normal</span>
+                <small>Battle royale classique avec la vision actuelle.</small>
+              </button>
+              <button id="nightModeButton" class="mode-card night" type="button">
+                <span>Night Life</span>
+                <small>Nuit noire, vision courte et lampe torche directionnelle.</small>
+              </button>
+              <button id="extractionModeButton" class="mode-card extraction" type="button">
+                <span>Extraction</span>
+                <small>Loot, equipe-toi, remplis ton sac et rejoins une zone d'exfiltration.</small>
+              </button>
+            </div>
+          </div>
+
+          <div class="menu-tab" data-menu-panel="settings">
+            <div class="settings-grid">
+              <label>Volume <input id="volumeSlider" type="range" min="0" max="100" value="55"></label>
+              <label><input id="showMinimapToggle" type="checkbox" checked> Mini-carte</label>
+              <button class="keybind" type="button" data-action="up">Avancer: Z/W</button>
+              <button class="keybind" type="button" data-action="left">Gauche: Q/A</button>
+              <button class="keybind" type="button" data-action="down">Reculer: S</button>
+              <button class="keybind" type="button" data-action="right">Droite: D</button>
+              <button class="keybind" type="button" data-action="reload">Recharger: R</button>
+              <button class="keybind" type="button" data-action="dash">Esquive: Shift</button>
+              <button class="keybind" type="button" data-action="build">Construire: B</button>
+              <button class="keybind" type="button" data-action="cycleMaterial">Materiau: X</button>
+            </div>
+          </div>
+
+          <div class="menu-tab" data-menu-panel="skins">
+            <div id="skinsGrid" class="skin-grid"></div>
+          </div>
+
+          <div class="menu-tab" data-menu-panel="shop">
+            <p class="lead compact">Boutique prete pour plus tard : skins, effets et objets cosmetiques pourront apparaitre ici.</p>
+          </div>
+
+          <div class="menu-tab" data-menu-panel="locker">
+            <div class="locker-head">
+              <span id="creditsCount">0 credits</span>
+              <button id="sellLockerButton" type="button">Tout vendre</button>
+            </div>
+            <div id="lockerGrid" class="locker-grid"></div>
+          </div>
+
+          <div class="menu-tab" data-menu-panel="profile">
+            <div id="profileStats" class="profile-stats"></div>
+          </div>
+
+          <div class="menu-tab" data-menu-panel="friends">
+            <p class="lead compact">Liste d'amis prevue pour le futur multijoueur. Tu pourras ajouter d'autres joueurs ici.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="gameOver" class="screen hidden">
+      <div class="panel">
+        <p id="resultTag" class="eyebrow">partie terminee</p>
+        <h2 id="resultTitle">Elimine</h2>
+        <p id="resultStats" class="lead">Tu as termine dans le top 10.</p>
+        <div class="menu-actions">
+          <button id="retryButton" type="button">Rejouer</button>
+          <button id="menuButton" type="button">Menu</button>
+        </div>
+      </div>
+    </section>
+
+    <script src="game.js"></script>
+  </body>
+</html>
