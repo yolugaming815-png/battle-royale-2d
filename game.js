@@ -2006,6 +2006,7 @@ function canSeeByLight(observer, target, options = {}) {
 function playerCanSeeEntity(entity, options = {}) {
   if (!game || !game.player) return true;
   if (!isNightMode()) return true;
+  if (entity && entity !== game.player && sameTeam(game.player, entity)) return true;
   return canSeeByLight(game.player, entity, options);
 }
 
