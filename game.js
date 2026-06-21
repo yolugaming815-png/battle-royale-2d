@@ -2518,7 +2518,7 @@ function botGoalUnavailable(goalId) {
   if (!goalId) return false;
   if (goalId.startsWith("pickup:")) {
     const id = goalId.slice("pickup:".length);
-    return !game.pickups.some((pickup) => pickup.id === id && !pickup.taken);
+    return !game.pickups.some((pickup) => pickup.id === id && !pickup.taken && !zoneBlocksBotPickup(pickup));
   }
   if (goalId.startsWith("chest:")) {
     const id = goalId.slice("chest:".length);
@@ -2727,6 +2727,7 @@ function nearestPickup(fighter, range) {
   let bestDistance = range;
   for (const pickup of game.pickups) {
     if (!canPickup(fighter, pickup)) continue;
+    if (!fighter.isPlayer && zoneBlocksBotPickup(pickup)) continue;
     const d = distance(fighter, pickup);
     if (d < bestDistance) {
       best = pickup;
@@ -2741,6 +2742,7 @@ function nearestPriorityPickup(bot, range) {
   let bestScore = -Infinity;
   for (const pickup of game.pickups) {
     if (!canPickup(bot, pickup)) continue;
+    if (zoneBlocksBotPickup(pickup)) continue;
     if (botIgnoresGoal(bot, "pickup", pickup.id)) continue;
     if (!canSeeByLight(bot, pickup, { range: NIGHT_VIEW_RANGE, requireLineOfSight: true })) continue;
     const d = distance(bot, pickup);
@@ -2752,6 +2754,12 @@ function nearestPriorityPickup(bot, range) {
     }
   }
   return best;
+}
+
+function zoneBlocksBotPickup(pickup) {
+  if (!game || game.mode === "extraction") return false;
+  if (game.zone.mode === "hidden" || game.zone.mode === "revealing") return false;
+  return !insideZone(pickup);
 }
 
 function rarityScore(rarity) {
@@ -3770,6 +3778,7 @@ function findPickupUnderFighter(fighter) {
   for (const pickup of game.pickups) {
     if (pickup.taken) continue;
     if (!canPickup(fighter, pickup)) continue;
+    if (!fighter.isPlayer && zoneBlocksBotPickup(pickup)) continue;
     if (fighter.isPlayer && !playerCanSeeEntity(pickup, { range: NIGHT_VIEW_RANGE, requireLineOfSight: true })) continue;
     const d = distance(fighter, pickup);
     if (d <= fighter.radius + pickup.radius + 8 && d < bestDistance) {
