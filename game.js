@@ -2071,8 +2071,18 @@ function updateBots(dt) {
     if (bot.downed) {
       updateDownedFighter(bot, dt);
       if (!bot.alive) continue;
-      bot.moveX = 0;
-      bot.moveY = 0;
+      if (!insideZone(bot)) {
+        const crawlAngle = angleTo(bot, game.zone);
+        bot.aim = crawlAngle;
+        moveFighter(
+          bot,
+          Math.cos(crawlAngle) * bot.speed * DOWNED_SPEED_MULT * terrainSpeedMultiplier(bot) * dt,
+          Math.sin(crawlAngle) * bot.speed * DOWNED_SPEED_MULT * terrainSpeedMultiplier(bot) * dt,
+        );
+      } else {
+        bot.moveX = 0;
+        bot.moveY = 0;
+      }
       applyStormDamage(bot, dt);
       continue;
     }
@@ -2084,6 +2094,7 @@ function updateBots(dt) {
 
     bot.aiTimer -= dt;
     const downedAlly = nearestDownedAlly(bot, 920);
+    const reviveThreat = downedAlly ? findNearestOpponent(downedAlly, 560) : null;
     const defensiveTarget = bot.lastAttacker && bot.lastAttacker.alive && !bot.lastAttacker.downed && bot.aggroTimer > 0 && distance(bot, bot.lastAttacker) < 920
       ? bot.lastAttacker
       : null;
@@ -2091,10 +2102,14 @@ function updateBots(dt) {
     const squadGoal = squadTravelGoal(bot);
     const canCloseFight = game.elapsed > BOT_CLOSE_FIGHT_GRACE;
     const closeThreat = bot.unstuckTimer > 0 || !canCloseFight ? null : findNearestOpponent(bot, 95);
+    const shouldReviveAlly = downedAlly && botShouldReviveAlly(bot, downedAlly, reviveThreat, defensiveTarget || closeThreat);
+    const rescueThreat = downedAlly && !shouldReviveAlly && reviveThreat && distance(bot, reviveThreat) < 980
+      ? reviveThreat
+      : null;
     const canHunt = botCombatReady(bot) && game.elapsed > BOT_LOOT_PHASE_TIME;
     const target = bot.unstuckTimer > 0
       ? null
-      : defensiveTarget || closeThreat || assistTarget || (canHunt ? findNearestOpponent(bot, 880) : null);
+      : (shouldReviveAlly ? null : defensiveTarget || closeThreat || rescueThreat || assistTarget || (canHunt ? findNearestOpponent(bot, 880) : null));
     if (closeThreat) {
       bot.lastAttacker = closeThreat;
       bot.aggroTimer = Math.max(bot.aggroTimer, 2.4);
@@ -2107,14 +2122,15 @@ function updateBots(dt) {
     if (!usingConsumable) botSelectWeapon(bot, target);
     const outsideZone = !insideZone(bot);
 
-    if (downedAlly && !defensiveTarget && !assistTarget) {
-      bot.wanderX = downedAlly.x;
-      bot.wanderY = downedAlly.y;
-      setBotGoal(bot, `revive:${downedAlly.id}`, downedAlly);
-    } else if (outsideZone) {
+    if (outsideZone) {
       bot.wanderX = game.zone.x;
       bot.wanderY = game.zone.y;
       setBotGoal(bot, "zone", { x: bot.wanderX, y: bot.wanderY });
+    } else if (shouldReviveAlly) {
+      bot.wanderX = downedAlly.x;
+      bot.wanderY = downedAlly.y;
+      setBotGoal(bot, `revive:${downedAlly.id}`, downedAlly);
+      maybeBotBuildReviveCover(bot, downedAlly, reviveThreat);
     } else if (target && bot.aiTimer <= 0) {
       bot.aiTimer = rand(0.25, 0.55);
       const away = angleTo(target, bot) + rand(-0.8, 0.8);
@@ -2200,7 +2216,7 @@ function updateBots(dt) {
       startReload(bot);
     }
 
-    if (downedAlly && !defensiveTarget && distance(bot, downedAlly) <= REVIVE_RANGE * 0.78) {
+    if (shouldReviveAlly && distance(bot, downedAlly) <= REVIVE_RANGE * 0.78) {
       speed = 0;
       bot.path = [];
     } else if (!target && findPickupUnderFighter(bot)) {
@@ -2277,6 +2293,35 @@ function nearestDownedAlly(fighter, range = 900) {
     }
   }
   return best;
+}
+
+function assignedBotReviver(target) {
+  if (!target || !target.teamId) return null;
+  const candidates = standingTeamMembers(target.teamId)
+    .filter((ally) => !ally.isPlayer && insideZone(ally))
+    .sort((a, b) => distance(a, target) - distance(b, target));
+  return candidates[0] || null;
+}
+
+function botShouldReviveAlly(bot, target, nearbyThreat = null, directThreat = null) {
+  if (!bot || !target || !target.downed || !sameTeam(bot, target)) return false;
+  if (!insideZone(bot) || !insideZone(target)) return false;
+  if (assignedBotReviver(target) !== bot) return false;
+
+  const threat = directThreat || nearbyThreat;
+  if (!threat || !threat.alive || threat.downed || sameTeam(bot, threat)) return true;
+
+  const threatToDowned = distance(threat, target);
+  const threatToBot = distance(threat, bot);
+  if (threatToDowned < 175 || threatToBot < 145) return false;
+
+  if (threatToDowned < 440 || threatToBot < 380) {
+    const coverAllies = standingTeamMembers(bot.teamId)
+      .filter((ally) => ally !== bot && ally !== target && distance(ally, target) < 760);
+    return coverAllies.length >= 1 || Boolean(bestBuildMaterial(bot));
+  }
+
+  return true;
 }
 
 function teamAssistTarget(fighter, range = 1180) {
@@ -2390,13 +2435,15 @@ function updateRevives(dt) {
 }
 
 function bestReviverFor(target) {
+  if (!insideZone(target)) return null;
   const allies = standingTeamMembers(target.teamId).filter((ally) => ally !== target && distance(ally, target) <= REVIVE_RANGE);
   if (!allies.length) return null;
   const player = game.player;
   if (player.alive && !player.downed && sameTeam(player, target) && distance(player, target) <= REVIVE_RANGE) {
     if (keys.has("KeyE") || touchInput.interact) return player;
   }
-  return allies.find((ally) => !ally.isPlayer) || null;
+  const threat = findNearestOpponent(target, 560);
+  return allies.find((ally) => !ally.isPlayer && botShouldReviveAlly(ally, target, threat, null)) || null;
 }
 
 function setBotGoal(bot, goalId, destination) {
@@ -2477,6 +2524,25 @@ function maybeBotBuild(bot, target, targetDistance, canSeeTarget, defensiveTarge
     bot.aiTimer = Math.min(bot.aiTimer, 0.2);
   } else {
     bot.buildCooldown = rand(0.8, 1.6);
+  }
+}
+
+function maybeBotBuildReviveCover(bot, downedAlly, threat) {
+  if (!threat || bot.buildCooldown > 0 || !insideZone(bot) || !insideZone(downedAlly)) return;
+  const threatDistance = distance(bot, threat);
+  if (threatDistance < 135 || threatDistance > 620) return;
+  if (!hasLineOfSight(bot, threat) && !incomingBulletThreat(bot, threat)) return;
+  const material = bestBuildMaterial(bot);
+  if (!material) return;
+
+  bot.selectedMaterial = material;
+  bot.aim = angleTo(bot, threat);
+  if (tryBuildWall(bot, { quiet: true, preferStrongest: true })) {
+    bot.buildCooldown = rand(2.6, 4.8);
+    bot.path = [];
+    bot.aiTimer = Math.min(bot.aiTimer, 0.16);
+  } else {
+    bot.buildCooldown = rand(0.7, 1.25);
   }
 }
 
