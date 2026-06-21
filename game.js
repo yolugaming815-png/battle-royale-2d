@@ -104,6 +104,7 @@ const TEAM_MODES = {
 const PLAYER_TEAM_ID = "player-team";
 const REVIVE_TIME = 4;
 const REVIVE_RANGE = 62;
+const REVIVE_THREAT_SAFE_DISTANCE = GRID_SIZE * 4;
 const DOWNED_MAX_HEALTH = 100;
 const DOWNED_PROTECTION_TIME = 1.5;
 const DOWNED_DEATH_TIME = 30;
@@ -907,6 +908,7 @@ function makeZone() {
     phase: 1,
     mode: "hidden",
     timer: 55,
+    reveal: 12,
     wait: 24,
     shrink: 18,
     damage: 5,
@@ -2102,10 +2104,14 @@ function updateBots(dt) {
     const squadGoal = squadTravelGoal(bot);
     const canCloseFight = game.elapsed > BOT_CLOSE_FIGHT_GRACE;
     const closeThreat = bot.unstuckTimer > 0 || !canCloseFight ? null : findNearestOpponent(bot, 95);
+    const assignedReviver = downedAlly ? assignedBotReviver(downedAlly) : null;
     const shouldReviveAlly = downedAlly && botShouldReviveAlly(bot, downedAlly, reviveThreat, defensiveTarget || closeThreat);
     const rescueThreat = downedAlly && !shouldReviveAlly && reviveThreat && distance(bot, reviveThreat) < 980
       ? reviveThreat
       : null;
+    if (downedAlly && assignedReviver === bot && !shouldReviveAlly && reviveThreat) {
+      maybeBotBuildReviveCover(bot, downedAlly, reviveThreat);
+    }
     const canHunt = botCombatReady(bot) && game.elapsed > BOT_LOOT_PHASE_TIME;
     const target = bot.unstuckTimer > 0
       ? null
@@ -2303,6 +2309,23 @@ function assignedBotReviver(target) {
   return candidates[0] || null;
 }
 
+function reviveCoverAllies(bot, target, threat) {
+  if (!threat) return [];
+  return standingTeamMembers(bot.teamId)
+    .filter((ally) => ally !== bot && ally !== target && distance(ally, target) < 760)
+    .filter((ally) => {
+      const weapon = getEquippedWeapon(ally);
+      return weapon && !weapon.melee && distance(ally, threat) < 880 && hasLineOfSight(ally, threat);
+    });
+}
+
+function reviveHasProtection(bot, target, threat) {
+  if (!threat) return true;
+  const protectedByWall = !hasLineOfSight(threat, target);
+  const coveredByTeam = reviveCoverAllies(bot, target, threat).length > 0;
+  return protectedByWall || coveredByTeam;
+}
+
 function botShouldReviveAlly(bot, target, nearbyThreat = null, directThreat = null) {
   if (!bot || !target || !target.downed || !sameTeam(bot, target)) return false;
   if (!insideZone(bot) || !insideZone(target)) return false;
@@ -2313,13 +2336,11 @@ function botShouldReviveAlly(bot, target, nearbyThreat = null, directThreat = nu
 
   const threatToDowned = distance(threat, target);
   const threatToBot = distance(threat, bot);
-  if (threatToDowned < 175 || threatToBot < 145) return false;
+  const hasProtection = reviveHasProtection(bot, target, threat);
+  if (threatToDowned < 150 || threatToBot < 130) return hasProtection && threatToBot > 105;
 
-  if (threatToDowned < 440 || threatToBot < 380) {
-    const coverAllies = standingTeamMembers(bot.teamId)
-      .filter((ally) => ally !== bot && ally !== target && distance(ally, target) < 760);
-    return coverAllies.length >= 1 || Boolean(bestBuildMaterial(bot));
-  }
+  if (!hasProtection && threatToDowned < REVIVE_THREAT_SAFE_DISTANCE) return false;
+  if (!hasProtection && threatToBot < REVIVE_THREAT_SAFE_DISTANCE * 0.72) return false;
 
   return true;
 }
@@ -2469,6 +2490,10 @@ function ignoreCurrentBotGoal(bot) {
 
 function updateBotGoalProgress(bot, destination, target, dt) {
   if (!bot.goalId || target || bot.pickupHold || findPickupUnderFighter(bot)) return;
+  if (botGoalUnavailable(bot.goalId)) {
+    ignoreCurrentBotGoal(bot);
+    return;
+  }
   const currentDistance = distance(bot, destination);
   if (currentDistance < 70) {
     bot.goalStallTimer = 0;
@@ -2487,6 +2512,23 @@ function updateBotGoalProgress(bot, destination, target, dt) {
     ignoreCurrentBotGoal(bot);
     forceBotUnstuck(bot, angleTo(destination, bot));
   }
+}
+
+function botGoalUnavailable(goalId) {
+  if (!goalId) return false;
+  if (goalId.startsWith("pickup:")) {
+    const id = goalId.slice("pickup:".length);
+    return !game.pickups.some((pickup) => pickup.id === id && !pickup.taken);
+  }
+  if (goalId.startsWith("chest:")) {
+    const id = goalId.slice("chest:".length);
+    return !game.chests.some((chest) => chest.id === id && !chest.opened);
+  }
+  if (goalId.startsWith("revive:")) {
+    const id = goalId.slice("revive:".length);
+    return !aliveFighters().some((fighter) => fighter.id === id && fighter.downed);
+  }
+  return false;
 }
 
 function botIgnoresGoal(bot, kind, id) {
@@ -3556,7 +3598,8 @@ function downFighter(fighter, source, storm = false) {
 
 function updateDownedFighter(fighter, dt) {
   if (!fighter.downed || !fighter.alive) return;
-  fighter.downedTimer += dt;
+  const beingRevived = fighter.reviveHold && fighter.reviveHold.progress > 0;
+  if (!beingRevived) fighter.downedTimer += dt;
   fighter.downedShield = Math.max(0, fighter.downedShield - dt);
   if (fighter.downedTimer >= DOWNED_DEATH_TIME) {
     eliminateFighter(fighter, null);
@@ -3691,7 +3734,14 @@ function updatePickupHold(fighter, dt) {
     fighter.pickupHold = null;
     return;
   }
-  if (fighter.isPlayer && game.mode === "extraction" && !keys.has("KeyE") && !touchInput.interact) {
+  if (
+    fighter.isPlayer
+    && game.mode === "extraction"
+    && pickup.kind !== "ammo"
+    && pickup.kind !== "material"
+    && !keys.has("KeyE")
+    && !touchInput.interact
+  ) {
     fighter.pickupHold = null;
     return;
   }
@@ -4180,9 +4230,16 @@ function updateZone(dt) {
   zone.timer -= dt;
 
   if (zone.mode === "hidden" && zone.timer <= 0) {
+    zone.mode = "revealing";
+    zone.timer = zone.reveal;
+    addFeed("La zone apparait progressivement");
+    return;
+  }
+
+  if (zone.mode === "revealing" && zone.timer <= 0) {
     zone.mode = "waiting";
     zone.timer = zone.wait;
-    addFeed("La zone est apparue");
+    addFeed("La zone est active");
     return;
   }
 
@@ -4218,12 +4275,12 @@ function updateZone(dt) {
 }
 
 function insideZone(fighter) {
-  if (game.zone.mode === "hidden") return true;
+  if (game.zone.mode === "hidden" || game.zone.mode === "revealing") return true;
   return Math.hypot(fighter.x - game.zone.x, fighter.y - game.zone.y) <= game.zone.radius - fighter.radius;
 }
 
 function applyStormDamage(fighter, dt) {
-  if (game.zone.mode === "hidden") {
+  if (game.zone.mode === "hidden" || game.zone.mode === "revealing") {
     fighter.stormTick = 0;
     return;
   }
@@ -4411,7 +4468,7 @@ function updateHud() {
     ? game.mode === "extraction"
       ? `Sac ${player.extractionBag.length}/${player.backpack.capacity}${player.exfilTimer > 0 ? ` - Exfil ${Math.ceil(EXTRACTION_EXFIL_TIME - player.exfilTimer)}s` : ""}`
       : `Zone cachee ${formatTime(game.zone.timer)}`
-    : `${game.zone.mode === "shrinking" ? "Zone bouge" : "Zone"} ${formatTime(game.zone.timer)}`;
+    : `${game.zone.mode === "shrinking" ? "Zone bouge" : game.zone.mode === "revealing" ? "Zone apparait" : "Zone"} ${formatTime(game.zone.timer)}`;
   ui.materials.innerHTML = MATERIAL_ORDER.map((material) => {
     const mat = MATERIALS[material];
     const active = material === player.selectedMaterial ? " active" : "";
@@ -4485,9 +4542,10 @@ function updatePickupPrompt() {
 
   if (!pickup) {
     if (nearbyPickup) {
+      const pickupAction = nearbyPickup.kind === "ammo" || nearbyPickup.kind === "material" ? "ajout direct" : "Maintiens E";
       ui.pickupPrompt.classList.remove("hidden");
       ui.pickupPrompt.innerHTML = `
-        <div class="pickup-title"><span>${nearbyPickup.label}</span><span>Maintiens E</span></div>
+        <div class="pickup-title"><span>${nearbyPickup.label}</span><span>${pickupAction}</span></div>
         <div class="pickup-bar"><span style="transform: scaleX(0)"></span></div>
       `;
       return;
@@ -4568,7 +4626,7 @@ function renderHotbar() {
 function playerReviveTarget() {
   if (!game || !game.player || game.player.downed) return null;
   return downedTeamMembers(PLAYER_TEAM_ID)
-    .filter((ally) => ally !== game.player && distance(game.player, ally) <= REVIVE_RANGE)
+    .filter((ally) => ally !== game.player && insideZone(ally) && distance(game.player, ally) <= REVIVE_RANGE)
     .sort((a, b) => distance(game.player, a) - distance(game.player, b))[0] || null;
 }
 
@@ -5406,8 +5464,10 @@ function fillRoundRect(target, x, y, w, h, radius, color) {
 
 function drawZone() {
   const zone = game.zone;
+  const revealProgress = zone.mode === "revealing" ? 1 - clamp(zone.timer / zone.reveal, 0, 1) : 1;
   ctx.save();
-  ctx.fillStyle = "rgba(239, 47, 54, 0.28)";
+  ctx.globalAlpha = clamp(revealProgress, 0.12, 1);
+  ctx.fillStyle = `rgba(239, 47, 54, ${0.28 * revealProgress})`;
   ctx.beginPath();
   ctx.rect(-600, -600, WORLD.width + 1200, WORLD.height + 1200);
   ctx.arc(zone.x, zone.y, zone.radius, 0, TAU, true);
@@ -5415,7 +5475,7 @@ function drawZone() {
 
   ctx.strokeStyle = IO_THEME.danger;
   ctx.lineWidth = zone.mode === "shrinking" ? 8 : 6;
-  ctx.setLineDash(zone.mode === "shrinking" ? [16, 13] : []);
+  ctx.setLineDash(zone.mode === "shrinking" || zone.mode === "revealing" ? [16, 13] : []);
   ctx.beginPath();
   ctx.arc(zone.x, zone.y, zone.radius, 0, TAU);
   ctx.stroke();
@@ -6205,11 +6265,14 @@ function drawMinimap() {
   }
 
   if (game.zone.mode !== "hidden") {
+    const revealProgress = game.zone.mode === "revealing" ? 1 - clamp(game.zone.timer / game.zone.reveal, 0, 1) : 1;
+    mini.globalAlpha = clamp(revealProgress, 0.18, 1);
     mini.strokeStyle = IO_THEME.danger;
     mini.lineWidth = 2;
     mini.beginPath();
     mini.arc(game.zone.x * sx, game.zone.y * sy, game.zone.radius * sx, 0, TAU);
     mini.stroke();
+    mini.globalAlpha = 1;
   }
 
   if (game.extractionZones && game.extractionZones.length) {
