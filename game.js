@@ -182,6 +182,7 @@ const WEAPON_FEEL = {
   shotgun: { trauma: 0.22 },
   assault_rifle: { trauma: 0.09 },
   sniper: { trauma: 0.3 },
+  bow: { trauma: 0.12 },
 };
 
 const AMMO_TYPES = {
@@ -190,6 +191,7 @@ const AMMO_TYPES = {
   shotgun: { label: "Pompe", short: "CAL", color: "#ff9b73", icon: "12", amount: 10 },
   assault: { label: "Assaut", short: "AST", color: "#b7f07a", icon: "5.56", amount: 24 },
   sniper: { label: "Sniper", short: "SNP", color: "#c9b2ff", icon: "7.62", amount: 7 },
+  arrow: { label: "Fleches", short: "FLE", color: "#e8c27a", icon: "ARC", amount: 12 },
 };
 
 const RARITIES = {
@@ -340,11 +342,31 @@ const WEAPONS = {
     bloomMax: 0.05,
     bloomRecovery: 0.25,
   },
+  bow: {
+    label: "Arc",
+    color: "#e8c27a",
+    ammoType: "arrow",
+    damage: 70,
+    cooldown: 0.32,
+    bulletSpeed: 1150,
+    bulletLife: 1.2,
+    spread: 0.07,
+    pellets: 1,
+    mag: 6,
+    reload: 1.6,
+    charge: true,
+    chargeTime: 1.1,
+    bloomPerShot: 0,
+    bloomMax: 0,
+    bloomRecovery: 0.2,
+  },
 };
 
+const BOW_MIN_CHARGE = 0.12;
+
 const BOT_ARCHETYPES = {
-  rusher: { label: "Fonceur", aggro: 1.35, engage: 0.7, hunt: 1.25, dash: 1.6, build: 0.5, lootPhase: 0.6, weaponBias: { shotgun: 45, smg: 25, sniper: -40 } },
-  sniper: { label: "Tireur", aggro: 0.9, engage: 1.7, hunt: 1.15, dash: 0.7, build: 0.9, lootPhase: 1, weaponBias: { sniper: 70, assault_rifle: 20, shotgun: -35 } },
+  rusher: { label: "Fonceur", aggro: 1.35, engage: 0.7, hunt: 1.25, dash: 1.6, build: 0.5, lootPhase: 0.6, weaponBias: { shotgun: 45, smg: 25, sniper: -40, bow: -30 } },
+  sniper: { label: "Tireur", aggro: 0.9, engage: 1.7, hunt: 1.15, dash: 0.7, build: 0.9, lootPhase: 1, weaponBias: { sniper: 70, assault_rifle: 20, shotgun: -35, bow: 35 } },
   camper: { label: "Campeur", aggro: 0.55, engage: 1.2, hunt: 0.6, dash: 0.5, build: 1.6, lootPhase: 1.3, weaponBias: { assault_rifle: 20 }, stealth: true },
   looter: { label: "Looteur", aggro: 0.7, engage: 1, hunt: 0.7, dash: 1.1, build: 0.7, lootPhase: 1.8, weaponBias: {}, lootRange: 1.5 },
   protector: { label: "Protecteur", aggro: 0.85, engage: 1, hunt: 0.9, dash: 0.9, build: 1.4, lootPhase: 1, weaponBias: {}, reviveBias: true },
@@ -756,6 +778,10 @@ function sfxShot(weaponKey, x, y, isPlayer) {
       sfxNoise({ duration: 0.06, gain: 0.22 * g, filter: "highpass", freq: 2500, pan });
       sfxTone({ freq: 210, endFreq: 38, type: "sine", duration: 0.42, gain: 0.34 * g, pan });
       break;
+    case "bow":
+      sfxTone({ freq: 320, endFreq: 130, type: "triangle", duration: 0.14, gain: 0.18 * g, pan });
+      sfxNoise({ duration: 0.07, gain: 0.09 * g, filter: "bandpass", freq: 1200, endFreq: 2400, pan });
+      break;
     default:
       sfxNoise({ duration: 0.09, gain: 0.1 * g, filter: "bandpass", freq: 900, endFreq: 350, pan });
   }
@@ -1072,6 +1098,7 @@ function makeAmmoPool(isPlayer) {
     shotgun: isPlayer ? 0 : 999,
     assault: isPlayer ? 0 : 999,
     sniper: isPlayer ? 0 : 999,
+    arrow: isPlayer ? 0 : 999,
   };
 }
 
@@ -1368,6 +1395,7 @@ function switchHotbarSlot(index) {
   player.pendingReload = false;
   player.useHold = null;
   player.bloom = 0;
+  player.charge = 0;
   syncEquippedFromHotbar(player);
   updateHud();
 }
@@ -1476,6 +1504,7 @@ function makeFighter(name, x, y, isPlayer = false, options = {}) {
     swingDuration: 0,
     hitFlash: 0,
     bloom: 0,
+    charge: 0,
     fragCooldown: rand(2, 6),
     launchTime: 0,
     launchRearm: 0,
@@ -2564,6 +2593,8 @@ function makePickups(obstacles, count, features) {
     "shotgun",
     "assault_rifle",
     "sniper",
+    "bow",
+    "ammo_arrow",
   ];
 
   for (let i = 0; i < count; i += 1) {
@@ -2680,11 +2711,11 @@ function addExtractionLoot(targetGame) {
 }
 
 function randomWeaponType() {
-  return pick(["pistol", "smg", "shotgun", "assault_rifle", "sniper"]);
+  return pick(["pistol", "smg", "shotgun", "assault_rifle", "sniper", "bow"]);
 }
 
 function randomAmmoPickup() {
-  return pick(["ammo_pistol", "ammo_smg", "ammo_shotgun", "ammo_assault", "ammo_sniper"]);
+  return pick(["ammo_pistol", "ammo_smg", "ammo_shotgun", "ammo_assault", "ammo_sniper", "ammo_arrow"]);
 }
 
 function ammoPickupForWeapon(weaponType) {
@@ -2946,11 +2977,18 @@ function updatePlayer(dt) {
   const actionPressed = mouse.down || keys.has("Space") || touchInput.firing;
   const activeItem = getActiveItem(player);
 
+  const equippedWeapon = getEquippedWeapon(player);
   if (activeItem && activeItem.kind === "consumable") {
+    player.charge = 0;
     updateConsumableUse(player, dt, actionPressed);
+  } else if (equippedWeapon && equippedWeapon.charge) {
+    updateChargeWeapon(player, dt, actionPressed);
+    if (!actionPressed) player.useHold = null;
   } else if (actionPressed) {
+    player.charge = 0;
     tryShoot(player, player.aim);
   } else {
+    player.charge = 0;
     player.useHold = null;
   }
 
@@ -3882,17 +3920,20 @@ function botWeaponSituationScore(item, targetDistance, bot = null) {
     if (item.type === "smg") score += 42;
     if (item.type === "sniper") score -= 120;
     if (item.type === "assault_rifle") score += 12;
+    if (item.type === "bow") score -= 70;
   } else if (targetDistance < 360) {
     if (item.type === "smg") score += 58;
     if (item.type === "assault_rifle") score += 44;
     if (item.type === "pistol") score += 18;
     if (item.type === "shotgun") score -= 20;
     if (item.type === "sniper") score -= 34;
+    if (item.type === "bow") score += 22;
   } else {
     if (item.type === "sniper") score += 92;
     if (item.type === "assault_rifle") score += 62;
     if (item.type === "smg") score -= 34;
     if (item.type === "shotgun") score -= 120;
+    if (item.type === "bow") score += 48;
   }
 
   if (item.mag <= 0) score -= 36;
@@ -3906,6 +3947,7 @@ function switchBotSlot(bot, slot) {
   bot.pendingReload = false;
   bot.useHold = null;
   bot.bloom = 0;
+  bot.charge = 0;
   syncEquippedFromHotbar(bot);
 }
 
@@ -4443,6 +4485,18 @@ function tryShoot(fighter, baseAngle) {
     return;
   }
 
+  if (weapon.charge) {
+    if (fighter.isPlayer) return;
+    if (getMagazine(fighter) <= 0) {
+      startReload(fighter);
+      return;
+    }
+    const charge = rand(0.55, 1);
+    fireChargedShot(fighter, baseAngle, charge);
+    fighter.cooldown += charge * weapon.chargeTime;
+    return;
+  }
+
   const currentMag = getMagazine(fighter);
   if (currentMag <= 0) {
     startReload(fighter);
@@ -4482,6 +4536,62 @@ function tryShoot(fighter, baseAngle) {
     if ((WEAPON_FEEL[weaponKey]?.trauma || 0) >= 0.2) fx.zoomPunch = ZOOM_PUNCH;
   }
   sfxShot(weaponKey, fighter.x, fighter.y, fighter.isPlayer);
+}
+
+function fireChargedShot(fighter, baseAngle, charge) {
+  const weapon = getEquippedWeapon(fighter);
+  const weaponKey = getEquippedWeaponKey(fighter);
+  const rarity = getEquippedWeaponRarity(fighter);
+  setMagazine(fighter, getMagazine(fighter) - 1);
+  fighter.cooldown = getWeaponCooldown(weaponKey, rarity);
+  if (fighter.isPlayer && game.matchStats) game.matchStats.shotsFired += 1;
+
+  const spread = getWeaponSpread(weaponKey, rarity) * (1.15 - charge);
+  const angle = baseAngle + rand(-spread, spread);
+  const speed = weapon.bulletSpeed * (0.45 + 0.55 * charge);
+  const damage = Math.round(getWeaponDamage(weaponKey, rarity) * (0.3 + 0.7 * charge));
+  const startX = fighter.x + Math.cos(angle) * (fighter.radius + 10);
+  const startY = fighter.y + Math.sin(angle) * (fighter.radius + 10);
+  game.bullets.push({
+    x: startX,
+    y: startY,
+    spawnX: startX,
+    spawnY: startY,
+    vx: Math.cos(angle) * speed,
+    vy: Math.sin(angle) * speed,
+    radius: 3.6,
+    life: weapon.bulletLife,
+    damage,
+    owner: fighter,
+    color: weapon.color,
+    weaponType: weaponKey,
+    arrow: true,
+  });
+
+  spawnMuzzle(fighter.x + Math.cos(baseAngle) * 26, fighter.y + Math.sin(baseAngle) * 26, weapon.color);
+  if (fighter.isPlayer) addTrauma((WEAPON_FEEL[weaponKey]?.trauma || 0.1) * (0.4 + 0.6 * charge));
+  sfxShot(weaponKey, fighter.x, fighter.y, fighter.isPlayer);
+}
+
+function updateChargeWeapon(fighter, dt, pressed) {
+  const weapon = getEquippedWeapon(fighter);
+  if (!weapon || !weapon.charge || fighter.reload > 0 || fighter.launchTime > 0) {
+    fighter.charge = 0;
+    return;
+  }
+  if (getMagazine(fighter) <= 0) {
+    fighter.charge = 0;
+    if (pressed) startReload(fighter);
+    return;
+  }
+  if (pressed && fighter.cooldown <= 0) {
+    fighter.charge = Math.min(1, (fighter.charge || 0) + dt / weapon.chargeTime);
+  } else if (!pressed && (fighter.charge || 0) >= BOW_MIN_CHARGE) {
+    fireChargedShot(fighter, fighter.aim, fighter.charge);
+    fighter.charge = 0;
+  } else if (!pressed) {
+    fighter.charge = 0;
+  }
 }
 
 function startReload(fighter) {
@@ -4751,6 +4861,7 @@ function downFighter(fighter, source, storm = false) {
   fighter.reload = 0;
   fighter.pendingReload = false;
   fighter.cooldown = 0;
+  fighter.charge = 0;
   spawnHit(fighter.x, fighter.y, "#ff5a66", 16);
   sfxDown(fighter.x, fighter.y);
   addFeed(storm ? `${fighter.name} est a terre dans la zone` : `${fighter.name} est a terre`);
@@ -7355,6 +7466,37 @@ function drawWeaponSilhouette(target, type, color, scale = 1, options = {}) {
     target.lineTo(16, -5);
     target.stroke();
     if (options.label) drawWeaponCode(target, "SNP", color);
+  } else if (type === "bow") {
+    target.strokeStyle = wood;
+    target.lineWidth = 6;
+    target.beginPath();
+    target.arc(-8, 0, 26, -Math.PI * 0.42, Math.PI * 0.42);
+    target.stroke();
+    target.strokeStyle = color;
+    target.lineWidth = 3.4;
+    target.beginPath();
+    target.arc(-8, 0, 26, -Math.PI * 0.42, Math.PI * 0.42);
+    target.stroke();
+    target.strokeStyle = metal;
+    target.lineWidth = 2;
+    target.beginPath();
+    target.moveTo(1, -25);
+    target.lineTo(1, 25);
+    target.stroke();
+    target.strokeStyle = dark;
+    target.lineWidth = 3.4;
+    target.beginPath();
+    target.moveTo(-16, 0);
+    target.lineTo(22, 0);
+    target.stroke();
+    target.fillStyle = metal;
+    target.beginPath();
+    target.moveTo(28, 0);
+    target.lineTo(20, -4);
+    target.lineTo(20, 4);
+    target.closePath();
+    target.fill();
+    if (options.label) drawWeaponCode(target, "ARC", color);
   }
 
   target.restore();
@@ -7409,6 +7551,26 @@ function drawAmmoPickup(ammoType, color) {
       ctx.fillStyle = "#2d243a";
       ctx.fillRect(-18 + i * 13, 8, 7, 6);
     }
+  } else if (ammoType === "arrow") {
+    for (let i = 0; i < 3; i += 1) {
+      const x = -14 + i * 12;
+      ctx.strokeStyle = "#7a4f32";
+      ctx.lineWidth = 3.4;
+      ctx.beginPath();
+      ctx.moveTo(x, 14);
+      ctx.lineTo(x, -8);
+      ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(x, -16);
+      ctx.lineTo(x - 4, -8);
+      ctx.lineTo(x + 4, -8);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "#d4d7dc";
+      ctx.fillRect(x - 3, 10, 6, 5);
+    }
+    ctx.strokeStyle = "rgba(5, 8, 8, 0.78)";
   }
   ctx.restore();
 }
@@ -7791,6 +7953,17 @@ function drawFighter(fighter) {
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.arc(0, 0, fighter.radius + 9 + fighter.bloom * 210, 0, TAU);
+    ctx.stroke();
+    ctx.globalAlpha = baseAlpha;
+  }
+
+  if ((fighter.charge || 0) > 0.02) {
+    const baseAlpha = ctx.globalAlpha;
+    ctx.globalAlpha = baseAlpha * 0.85;
+    ctx.strokeStyle = fighter.charge >= 1 ? "#ffd45e" : "#fff8df";
+    ctx.lineWidth = 3.4;
+    ctx.beginPath();
+    ctx.arc(0, 0, fighter.radius + 7, -Math.PI / 2, -Math.PI / 2 + TAU * fighter.charge);
     ctx.stroke();
     ctx.globalAlpha = baseAlpha;
   }
