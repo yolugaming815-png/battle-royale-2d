@@ -36,5 +36,3 @@ Ouvre `index.html` dans ton navigateur.
 - Zone de danger qui se referme
 - Mini-carte, compteur de survivants, score et fil d'eliminations
 - Menu avec skins, boutique, profil, amis, rename et parametres
-
-<!-- deploy-check -->
