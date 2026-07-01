@@ -309,33 +309,46 @@ h2 {
 }
 
 .shop-card {
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) max-content max-content;
   border-left: 3px solid var(--rarity, rgba(255, 255, 255, 0.1));
+  column-gap: 12px;
+  text-align: left;
 }
 
 .shop-card .rarity-tag {
+  justify-self: end;
   font-size: 0.72rem;
   font-weight: 900;
+  white-space: nowrap;
   text-transform: uppercase;
 }
 
 .shop-card .card-name {
   display: grid;
+  justify-self: stretch;
   gap: 1px;
   min-width: 0;
+  line-height: 1;
+  text-align: left;
 }
 
 .shop-card .kind-tag {
+  display: block;
   color: var(--muted);
   font-size: 0.68rem;
   font-weight: 800;
+  line-height: 1.05;
+  text-align: left;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
 .shop-card .card-action {
+  justify-self: end;
   font-size: 0.82rem;
   font-weight: 900;
+  white-space: nowrap;
+  text-align: right;
   color: var(--gold);
 }
 
