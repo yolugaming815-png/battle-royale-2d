@@ -8344,7 +8344,7 @@ function makeCosmeticCard(kind, item, options = {}) {
   } else action = `${item.price} cr`;
   card.innerHTML = `
     <span class="skin-swatch" style="background:${item.color || "rgba(255,255,255,0.14)"}"></span>
-    <span>${item.label}</span>
+    <span class="card-name">${item.label}<small class="kind-tag">${cosmeticKindLabel(kind)}</small></span>
     <span class="rarity-tag" style="color:${rarity.color}">${rarity.label}</span>
     <span class="card-action">${action}</span>
   `;
