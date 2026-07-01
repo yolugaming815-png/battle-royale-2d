@@ -151,6 +151,28 @@ const MATERIALS = {
 const MATERIAL_ORDER = ["wood", "stone", "metal"];
 const SAVE_KEY = "battleRoyale2DProfileV1";
 
+const TRAUMA_DECAY = 1.6;
+const SHAKE_MAX_OFFSET = 14;
+const SHAKE_MAX_ANGLE = 0.018;
+const HITSTOP_SCALE = 0.08;
+const HITSTOP_KILL = 0.038;
+const TRAUMA_PLAYER_HIT = 0.25;
+const ZOOM_PUNCH = 0.025;
+const LOW_HP_THRESHOLD = 35;
+const DAMAGE_FLASH_TIME = 0.5;
+const HIT_FLASH_TIME = 0.09;
+const DAMAGE_NUMBER_LIFE = 0.75;
+const DAMAGE_NUMBER_MAX = 50;
+const DAMAGE_NUMBER_MERGE_TIME = 0.09;
+const WEAPON_FEEL = {
+  pickaxe: { trauma: 0.05 },
+  pistol: { trauma: 0.07 },
+  smg: { trauma: 0.045 },
+  shotgun: { trauma: 0.22 },
+  assault_rifle: { trauma: 0.09 },
+  sniper: { trauma: 0.3 },
+};
+
 const AMMO_TYPES = {
   pistol: { label: "Pistolet", short: "PST", color: "#d4d7dc", icon: "9mm", amount: 28 },
   smg: { label: "Mitraillette", short: "SMG", color: "#8ee9ff", icon: "4.6", amount: 36 },
@@ -388,8 +410,322 @@ function saveData() {
 
 loadSavedData();
 
+const SFX_FULL_RANGE = 420;
+const SFX_MAX_RANGE = 1500;
+const SFX_VOICE_BUDGET = 10;
+
+const AUDIO = { ctx: null, master: null, noiseBuffer: null, voiceBudget: SFX_VOICE_BUDGET, rumbleGain: null };
+
+function initAudio() {
+  if (AUDIO.ctx) return;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return;
+  AUDIO.ctx = new Ctx();
+  const compressor = AUDIO.ctx.createDynamicsCompressor();
+  compressor.connect(AUDIO.ctx.destination);
+  AUDIO.master = AUDIO.ctx.createGain();
+  AUDIO.master.connect(compressor);
+  setMasterVolume();
+  const length = AUDIO.ctx.sampleRate;
+  AUDIO.noiseBuffer = AUDIO.ctx.createBuffer(1, length, AUDIO.ctx.sampleRate);
+  const data = AUDIO.noiseBuffer.getChannelData(0);
+  for (let i = 0; i < length; i += 1) data[i] = Math.random() * 2 - 1;
+  const rumbleSource = AUDIO.ctx.createBufferSource();
+  rumbleSource.buffer = AUDIO.noiseBuffer;
+  rumbleSource.loop = true;
+  const rumbleFilter = AUDIO.ctx.createBiquadFilter();
+  rumbleFilter.type = "lowpass";
+  rumbleFilter.frequency.value = 90;
+  AUDIO.rumbleGain = AUDIO.ctx.createGain();
+  AUDIO.rumbleGain.gain.value = 0;
+  rumbleSource.connect(rumbleFilter);
+  rumbleFilter.connect(AUDIO.rumbleGain);
+  AUDIO.rumbleGain.connect(AUDIO.master);
+  rumbleSource.start();
+}
+
+function unlockAudio() {
+  initAudio();
+  if (AUDIO.ctx && AUDIO.ctx.state === "suspended") AUDIO.ctx.resume();
+}
+
+function setMasterVolume() {
+  if (!AUDIO.master) return;
+  AUDIO.master.gain.value = (settings.volume / 100) ** 2;
+}
+
+function audioReady() {
+  return Boolean(AUDIO.ctx && AUDIO.ctx.state === "running" && settings.volume > 0);
+}
+
+function connectWithPan(node, pan) {
+  if (pan && AUDIO.ctx.createStereoPanner) {
+    const panner = AUDIO.ctx.createStereoPanner();
+    panner.pan.value = clamp(pan, -1, 1);
+    node.connect(panner);
+    panner.connect(AUDIO.master);
+  } else {
+    node.connect(AUDIO.master);
+  }
+}
+
+function sfxTone({ freq, endFreq, type = "square", duration = 0.1, attack = 0.002, gain = 0.2, pan = 0, when = 0 }) {
+  if (!audioReady()) return;
+  const t = AUDIO.ctx.currentTime + when;
+  const osc = AUDIO.ctx.createOscillator();
+  osc.type = type;
+  osc.frequency.setValueAtTime(Math.max(1, freq), t);
+  if (endFreq) osc.frequency.exponentialRampToValueAtTime(Math.max(1, endFreq), t + duration);
+  const env = AUDIO.ctx.createGain();
+  env.gain.setValueAtTime(0.0001, t);
+  env.gain.exponentialRampToValueAtTime(Math.max(0.0001, gain), t + attack);
+  env.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+  osc.connect(env);
+  connectWithPan(env, pan);
+  osc.start(t);
+  osc.stop(t + duration + 0.05);
+}
+
+function sfxNoise({ duration = 0.1, gain = 0.2, filter = "lowpass", freq = 1000, endFreq, Q = 1, pan = 0, when = 0 }) {
+  if (!audioReady()) return;
+  const t = AUDIO.ctx.currentTime + when;
+  const src = AUDIO.ctx.createBufferSource();
+  src.buffer = AUDIO.noiseBuffer;
+  src.loop = true;
+  const biquad = AUDIO.ctx.createBiquadFilter();
+  biquad.type = filter;
+  biquad.frequency.setValueAtTime(Math.max(1, freq), t);
+  if (endFreq) biquad.frequency.exponentialRampToValueAtTime(Math.max(1, endFreq), t + duration);
+  biquad.Q.value = Q;
+  const env = AUDIO.ctx.createGain();
+  env.gain.setValueAtTime(0.0001, t);
+  env.gain.exponentialRampToValueAtTime(Math.max(0.0001, gain), t + 0.004);
+  env.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+  src.connect(biquad);
+  biquad.connect(env);
+  connectWithPan(env, pan);
+  src.start(t, Math.random() * 0.5);
+  src.stop(t + duration + 0.05);
+}
+
+function sfxSpatial(x, y, isPlayer = false) {
+  if (!audioReady()) return null;
+  if (isPlayer || !game || !game.player) return { gain: 1, pan: 0 };
+  const dx = x - game.player.x;
+  const dy = y - game.player.y;
+  const d = Math.hypot(dx, dy);
+  if (d > SFX_MAX_RANGE) return null;
+  if (d > SFX_FULL_RANGE) {
+    if (AUDIO.voiceBudget <= 0) return null;
+    AUDIO.voiceBudget -= 1;
+  }
+  const gain = d <= SFX_FULL_RANGE ? 1 : ((SFX_MAX_RANGE - d) / (SFX_MAX_RANGE - SFX_FULL_RANGE)) ** 2;
+  return { gain, pan: clamp(dx / 900, -1, 1) * 0.7 };
+}
+
+function sfxShot(weaponKey, x, y, isPlayer) {
+  const s = sfxSpatial(x, y, isPlayer);
+  if (!s) return;
+  const g = s.gain;
+  const pan = s.pan;
+  switch (weaponKey) {
+    case "pistol":
+      sfxTone({ freq: 850, endFreq: 320, type: "square", duration: 0.07, gain: 0.16 * g, pan });
+      sfxNoise({ duration: 0.03, gain: 0.1 * g, filter: "highpass", freq: 3000, pan });
+      break;
+    case "smg":
+      sfxTone({ freq: 1000, endFreq: 500, type: "square", duration: 0.045, gain: 0.09 * g, pan });
+      break;
+    case "shotgun":
+      sfxNoise({ duration: 0.22, gain: 0.3 * g, filter: "lowpass", freq: 1800, endFreq: 250, pan });
+      sfxTone({ freq: 130, endFreq: 45, type: "sine", duration: 0.18, gain: 0.32 * g, pan });
+      break;
+    case "assault_rifle":
+      sfxTone({ freq: 650, endFreq: 240, type: "sawtooth", duration: 0.08, gain: 0.14 * g, pan });
+      sfxNoise({ duration: 0.05, gain: 0.08 * g, filter: "bandpass", freq: 1600, pan });
+      break;
+    case "sniper":
+      sfxNoise({ duration: 0.06, gain: 0.22 * g, filter: "highpass", freq: 2500, pan });
+      sfxTone({ freq: 210, endFreq: 38, type: "sine", duration: 0.42, gain: 0.34 * g, pan });
+      break;
+    default:
+      sfxNoise({ duration: 0.09, gain: 0.1 * g, filter: "bandpass", freq: 900, endFreq: 350, pan });
+  }
+}
+
+function sfxHit(x, y, shielded) {
+  const s = sfxSpatial(x, y);
+  if (!s) return;
+  if (shielded) sfxTone({ freq: 900, endFreq: 600, type: "triangle", duration: 0.05, gain: 0.14 * s.gain, pan: s.pan });
+  else sfxTone({ freq: 520, endFreq: 260, type: "triangle", duration: 0.06, gain: 0.15 * s.gain, pan: s.pan });
+}
+
+function sfxKill(x, y) {
+  const s = sfxSpatial(x, y);
+  if (!s) return;
+  sfxTone({ freq: 660, endFreq: 440, type: "square", duration: 0.07, gain: 0.16 * s.gain, pan: s.pan });
+  sfxTone({ freq: 440, endFreq: 220, type: "square", duration: 0.1, gain: 0.16 * s.gain, pan: s.pan, when: 0.06 });
+  sfxNoise({ duration: 0.18, gain: 0.14 * s.gain, filter: "lowpass", freq: 1200, endFreq: 200, pan: s.pan });
+}
+
+function sfxDown(x, y) {
+  const s = sfxSpatial(x, y);
+  if (!s) return;
+  sfxTone({ freq: 320, endFreq: 110, type: "sawtooth", duration: 0.25, gain: 0.14 * s.gain, pan: s.pan });
+}
+
+function sfxRevive(x, y) {
+  const s = sfxSpatial(x, y);
+  if (!s) return;
+  sfxTone({ freq: 330, endFreq: 660, type: "triangle", duration: 0.18, gain: 0.14 * s.gain, pan: s.pan });
+  sfxTone({ freq: 495, endFreq: 880, type: "triangle", duration: 0.16, gain: 0.12 * s.gain, pan: s.pan, when: 0.09 });
+}
+
+function sfxPickup() {
+  sfxTone({ freq: 700, endFreq: 1050, type: "triangle", duration: 0.07, gain: 0.12 });
+}
+
+function sfxChest(x, y) {
+  const s = sfxSpatial(x, y);
+  if (!s) return;
+  sfxTone({ freq: 240, endFreq: 480, type: "triangle", duration: 0.14, gain: 0.14 * s.gain, pan: s.pan });
+  sfxTone({ freq: 480, endFreq: 960, type: "triangle", duration: 0.12, gain: 0.1 * s.gain, pan: s.pan, when: 0.1 });
+}
+
+function sfxReloadStart() {
+  sfxTone({ freq: 520, endFreq: 300, type: "square", duration: 0.05, gain: 0.09 });
+}
+
+function sfxReloadEnd() {
+  sfxTone({ freq: 400, endFreq: 640, type: "square", duration: 0.06, gain: 0.1 });
+}
+
+function sfxDash(x, y, isPlayer) {
+  const s = sfxSpatial(x, y, isPlayer);
+  if (!s) return;
+  sfxNoise({ duration: 0.16, gain: 0.1 * s.gain, filter: "bandpass", freq: 700, endFreq: 1500, pan: s.pan });
+}
+
+function sfxHeal() {
+  sfxTone({ freq: 520, endFreq: 780, type: "sine", duration: 0.25, gain: 0.12 });
+}
+
+function sfxShieldUse() {
+  sfxTone({ freq: 350, endFreq: 700, type: "triangle", duration: 0.25, gain: 0.12 });
+}
+
+function sfxSmokeThrow(x, y) {
+  const s = sfxSpatial(x, y);
+  if (!s) return;
+  sfxNoise({ duration: 0.12, gain: 0.08 * s.gain, filter: "bandpass", freq: 600, endFreq: 1100, pan: s.pan });
+}
+
+function sfxExplosion(x, y) {
+  const s = sfxSpatial(x, y);
+  if (!s) return;
+  sfxNoise({ duration: 0.5, gain: 0.4 * s.gain, filter: "lowpass", freq: 2500, endFreq: 60, pan: s.pan });
+  sfxTone({ freq: 110, endFreq: 30, type: "sine", duration: 0.5, gain: 0.4 * s.gain, pan: s.pan });
+}
+
+function sfxUiClick() {
+  sfxTone({ freq: 1200, endFreq: 900, type: "square", duration: 0.03, gain: 0.06 });
+}
+
+function sfxZoneTick() {
+  sfxTone({ freq: 880, type: "sine", duration: 0.05, gain: 0.05 });
+}
+
+function sfxZoneWarn() {
+  sfxTone({ freq: 520, endFreq: 390, type: "triangle", duration: 0.3, gain: 0.14 });
+  sfxTone({ freq: 520, endFreq: 390, type: "triangle", duration: 0.3, gain: 0.12, when: 0.35 });
+}
+
+function sfxSting(won) {
+  const notes = won ? [392, 494, 587, 784] : [392, 330, 262, 196];
+  notes.forEach((freq, index) => sfxTone({ freq, type: "triangle", duration: 0.28, gain: 0.14, when: index * 0.16 }));
+}
+
+function sfxHeartbeat() {
+  sfxTone({ freq: 55, type: "sine", duration: 0.12, gain: 0.3 });
+  sfxTone({ freq: 50, type: "sine", duration: 0.1, gain: 0.22, when: 0.14 });
+}
+
+function updateGameAudio(dt) {
+  AUDIO.voiceBudget = SFX_VOICE_BUDGET;
+  if (!audioReady() || !game) return;
+  const player = game.player;
+  if (AUDIO.rumbleGain) {
+    let target = 0;
+    const zone = game.zone;
+    if (game.mode !== "extraction" && zone && zone.mode !== "hidden" && zone.mode !== "revealing" && player.alive) {
+      const edge = zone.radius - Math.hypot(player.x - zone.x, player.y - zone.y);
+      if (edge < 0) target = 0.5;
+      else if (edge < 600) target = 0.28 * (1 - edge / 600);
+    }
+    AUDIO.rumbleGain.gain.setTargetAtTime(target, AUDIO.ctx.currentTime, 0.1);
+  }
+  if (player.alive && !player.downed && player.health < LOW_HP_THRESHOLD) {
+    fx.heartbeatTimer -= dt;
+    if (fx.heartbeatTimer <= 0) {
+      sfxHeartbeat();
+      fx.heartbeatTimer = 0.55 + (player.health / LOW_HP_THRESHOLD) * 0.7;
+    }
+  }
+  if (game.zone && game.zone.mode === "shrinking") {
+    const second = Math.ceil(game.zone.timer);
+    if (second !== game.zoneTickSecond) {
+      game.zoneTickSecond = second;
+      sfxZoneTick();
+    }
+  }
+}
+
 let view = { width: 0, height: 0, dpr: 1 };
 let game = null;
+
+const fx = {
+  trauma: 0,
+  shakeX: 0,
+  shakeY: 0,
+  shakeAngle: 0,
+  hitStop: 0,
+  zoomPunch: 0,
+  damageFlash: 0,
+  damageFlashAngle: 0,
+  killConfirm: 0,
+  killConfirmText: "",
+  heartbeatTimer: 0,
+};
+
+function addTrauma(amount) {
+  fx.trauma = clamp(fx.trauma + amount, 0, 1);
+}
+
+function resetFx() {
+  fx.trauma = 0;
+  fx.shakeX = 0;
+  fx.shakeY = 0;
+  fx.shakeAngle = 0;
+  fx.hitStop = 0;
+  fx.zoomPunch = 0;
+  fx.damageFlash = 0;
+  fx.damageFlashAngle = 0;
+  fx.killConfirm = 0;
+  fx.killConfirmText = "";
+  fx.heartbeatTimer = 0;
+}
+
+function updateScreenFx(dt) {
+  fx.trauma = Math.max(0, fx.trauma - TRAUMA_DECAY * dt);
+  fx.zoomPunch = Math.max(0, fx.zoomPunch - dt * 0.3);
+  fx.damageFlash = Math.max(0, fx.damageFlash - dt);
+  fx.killConfirm = Math.max(0, fx.killConfirm - dt);
+  const shake = fx.trauma * fx.trauma;
+  const t = game ? game.elapsed : 0;
+  fx.shakeX = shake * SHAKE_MAX_OFFSET * (Math.sin(t * 91) * 0.6 + Math.sin(t * 47 + 1.3) * 0.4);
+  fx.shakeY = shake * SHAKE_MAX_OFFSET * (Math.cos(t * 83) * 0.6 + Math.sin(t * 59 + 2.1) * 0.4);
+  fx.shakeAngle = shake * SHAKE_MAX_ANGLE * Math.sin(t * 67);
+}
 let lastGameMode = "normal";
 let lastTeamSize = 1;
 let pendingGameMode = "normal";
@@ -897,6 +1233,7 @@ function makeFighter(name, x, y, isPlayer = false, options = {}) {
     dashY: 0,
     swingTimer: 0,
     swingDuration: 0,
+    hitFlash: 0,
   };
 }
 
@@ -1004,6 +1341,7 @@ function newGame(mode = lastGameMode, teamSize = 1) {
     mapFeatures,
     navGrid: null,
     particles: [],
+    damageNumbers: [],
     smokeGrenades: [],
     smokeClouds: [],
     grass: makeGrass(),
@@ -1023,6 +1361,7 @@ function newGame(mode = lastGameMode, teamSize = 1) {
   if (selectedMode === "extraction") addExtractionLoot(game);
   if (selectedMode === "extraction") applyExtractionLoadout(game.player);
   syncEquippedFromHotbar(game.player);
+  resetFx();
 
   ui.menu.classList.add("hidden");
   ui.gameOver.classList.add("hidden");
@@ -1777,6 +2116,7 @@ function openChest(chest) {
   if (chest.opened) return;
   chest.opened = true;
   spawnHit(chest.x, chest.y, "#f4cf67", 18);
+  sfxChest(chest.x, chest.y);
 
   const primaryWeapon = randomWeaponType();
   const drops = [
@@ -1888,6 +2228,8 @@ function update(dt) {
   updatePickups(dt);
   updateParticles(dt);
   updateExtraction(dt);
+  updateScreenFx(dt);
+  updateGameAudio(dt);
   updateCamera();
   checkVictory();
   game.minimapTimer += dt;
@@ -2029,9 +2371,11 @@ function startDash(fighter, x, y) {
   fighter.dashTime = 0.13;
   fighter.dashX = x;
   fighter.dashY = y;
+  sfxDash(fighter.x, fighter.y, fighter.isPlayer);
 }
 
 function tickFighter(fighter, dt) {
+  fighter.hitFlash = Math.max(0, (fighter.hitFlash || 0) - dt);
   fighter.cooldown = Math.max(0, fighter.cooldown - dt);
   fighter.reload = Math.max(0, fighter.reload - dt);
   fighter.dashCooldown = Math.max(0, fighter.dashCooldown - dt);
@@ -2060,7 +2404,10 @@ function tickFighter(fighter, dt) {
     const needed = getWeaponMag(getEquippedWeaponKey(fighter), getEquippedWeaponRarity(fighter)) - currentMag;
     const refill = fighter.isPlayer ? Math.min(needed, getAmmoCount(fighter, weapon.ammoType)) : needed;
     setMagazine(fighter, currentMag + refill);
-    if (fighter.isPlayer) changeAmmo(fighter, weapon.ammoType, -refill);
+    if (fighter.isPlayer) {
+      changeAmmo(fighter, weapon.ammoType, -refill);
+      sfxReloadEnd();
+    }
     fighter.pendingReload = false;
   }
 }
@@ -3350,6 +3697,8 @@ function tryShoot(fighter, baseAngle) {
     game.bullets.push({
       x: startX,
       y: startY,
+      spawnX: startX,
+      spawnY: startY,
       vx: Math.cos(angle) * weapon.bulletSpeed,
       vy: Math.sin(angle) * weapon.bulletSpeed,
       radius: weapon.pellets > 1 ? 3.2 : 4,
@@ -3361,6 +3710,11 @@ function tryShoot(fighter, baseAngle) {
   }
 
   spawnMuzzle(fighter.x + Math.cos(baseAngle) * 26, fighter.y + Math.sin(baseAngle) * 26, weapon.color);
+  if (fighter.isPlayer) {
+    addTrauma(WEAPON_FEEL[weaponKey]?.trauma || 0.06);
+    if ((WEAPON_FEEL[weaponKey]?.trauma || 0) >= 0.2) fx.zoomPunch = ZOOM_PUNCH;
+  }
+  sfxShot(weaponKey, fighter.x, fighter.y, fighter.isPlayer);
 }
 
 function startReload(fighter) {
@@ -3372,6 +3726,7 @@ function startReload(fighter) {
   fighter.reload = weapon.reload;
   fighter.pendingReload = true;
   spawnParticle(fighter.x, fighter.y - 18, "#dce5e8", 0.35, 24);
+  if (fighter.isPlayer) sfxReloadStart();
 }
 
 function swingMelee(fighter, baseAngle, weapon, rarity = "common") {
@@ -3403,9 +3758,11 @@ function swingMelee(fighter, baseAngle, weapon, rarity = "common") {
     hit = hitHarvestableObstacle(fighter, baseAngle, weapon) || hit;
   }
 
-  const fx = fighter.x + Math.cos(baseAngle) * weapon.range * 0.55;
-  const fy = fighter.y + Math.sin(baseAngle) * weapon.range * 0.55;
-  spawnHit(fx, fy, hit ? "#f4cf67" : weapon.color, hit ? 5 : 3);
+  const swingX = fighter.x + Math.cos(baseAngle) * weapon.range * 0.55;
+  const swingY = fighter.y + Math.sin(baseAngle) * weapon.range * 0.55;
+  spawnHit(swingX, swingY, hit ? "#f4cf67" : weapon.color, hit ? 5 : 3);
+  if (fighter.isPlayer) addTrauma(WEAPON_FEEL[getEquippedWeaponKey(fighter)]?.trauma || 0.05);
+  sfxShot(getEquippedWeaponKey(fighter), fighter.x, fighter.y, fighter.isPlayer);
 }
 
 function obstacleCenter(obstacle) {
@@ -3526,7 +3883,10 @@ function damageFighter(fighter, amount, source) {
       return;
     }
     fighter.downedHealth -= amount;
+    fighter.hitFlash = HIT_FLASH_TIME;
     spawnHit(fighter.x, fighter.y, "#ff5a66", 8);
+    sfxHit(fighter.x, fighter.y, false);
+    if (source && source.isPlayer) spawnDamageNumber(fighter, amount, "health");
     if (fighter.downedHealth <= 0) eliminateFighter(fighter, source);
     return;
   }
@@ -3541,14 +3901,27 @@ function damageFighter(fighter, amount, source) {
   let remaining = applyArmorMitigation(fighter, amount);
   if (remaining <= 0) {
     spawnHit(fighter.x, fighter.y, "#f4cf67", 8);
+    if (source && source.isPlayer) spawnDamageNumber(fighter, 0, "blocked");
     return;
   }
+  let shieldAbsorbed = 0;
   if (fighter.shield > 0) {
-    const absorbed = Math.min(fighter.shield, remaining);
-    fighter.shield -= absorbed;
-    remaining -= absorbed;
+    shieldAbsorbed = Math.min(fighter.shield, remaining);
+    fighter.shield -= shieldAbsorbed;
+    remaining -= shieldAbsorbed;
   }
   fighter.health -= remaining;
+  fighter.hitFlash = HIT_FLASH_TIME;
+  sfxHit(fighter.x, fighter.y, shieldAbsorbed > 0);
+  if (source && source.isPlayer) {
+    if (shieldAbsorbed > 0) spawnDamageNumber(fighter, shieldAbsorbed, "shield");
+    if (remaining > 0) spawnDamageNumber(fighter, remaining, "health");
+  }
+  if (fighter.isPlayer) {
+    addTrauma(TRAUMA_PLAYER_HIT);
+    fx.damageFlash = DAMAGE_FLASH_TIME;
+    if (source && source !== fighter) fx.damageFlashAngle = Math.atan2(source.y - fighter.y, source.x - fighter.x);
+  }
 
   if (fighter.health <= 0) {
     if (canBeDowned(fighter)) downFighter(fighter, source);
@@ -3597,6 +3970,7 @@ function downFighter(fighter, source, storm = false) {
   fighter.pendingReload = false;
   fighter.cooldown = 0;
   spawnHit(fighter.x, fighter.y, "#ff5a66", 16);
+  sfxDown(fighter.x, fighter.y);
   addFeed(storm ? `${fighter.name} est a terre dans la zone` : `${fighter.name} est a terre`);
   if (source && source.alive) {
     source.lastAttacker = fighter;
@@ -3625,6 +3999,7 @@ function reviveFighter(fighter, reviver) {
   fighter.reviveHold = null;
   fighter.invuln = 1.2;
   spawnHit(fighter.x, fighter.y, "#58f0cf", 18);
+  sfxRevive(fighter.x, fighter.y);
   addFeed(`${reviver.name} a releve ${fighter.name}`);
 }
 
@@ -3641,6 +4016,13 @@ function eliminateFighter(fighter, source, storm = false) {
   }
 
   dropLoot(fighter);
+  sfxKill(fighter.x, fighter.y);
+  if (source === game.player) {
+    fx.hitStop = HITSTOP_KILL;
+    fx.killConfirm = 1.1;
+    fx.killConfirmText = fighter.name;
+    addTrauma(0.12);
+  }
 
   if (source && source.alive) {
     source.kills += 1;
@@ -3726,7 +4108,10 @@ function collectPickups(fighter) {
 
     pickup.taken = true;
     spawnPickupBurst(pickup);
-    if (fighter.isPlayer) addFeed(`Loot: ${pickup.label}`);
+    if (fighter.isPlayer) {
+      addFeed(`Loot: ${pickup.label}`);
+      sfxPickup();
+    }
   }
 
   game.pickups = game.pickups.filter((pickup) => !pickup.taken);
@@ -4099,6 +4484,7 @@ function updateConsumableUse(fighter, dt, actionPressed) {
 
   if (consumable.throwable) {
     throwSmokeGrenade(fighter);
+    sfxSmokeThrow(fighter.x, fighter.y);
     fighter.hotbar[fighter.activeSlot] = null;
     fighter.useHold = null;
     if (fighter.isPlayer || fighter.isTeammate) addFeed(`${consumable.label} lancee`);
@@ -4123,6 +4509,10 @@ function updateConsumableUse(fighter, dt, actionPressed) {
 
     fighter.hotbar[fighter.activeSlot] = null;
     fighter.useHold = null;
+    if (fighter.isPlayer) {
+      if (item.type === "medkit") sfxHeal();
+      else sfxShieldUse();
+    }
     if (fighter.isPlayer || fighter.isTeammate) addFeed(`${consumable.label} utilise`);
   }
 }
@@ -4199,6 +4589,63 @@ function updateParticles(dt) {
   game.particles = game.particles.filter((particle) => particle.life > 0);
   for (const item of game.feed) item.time -= dt;
   game.feed = game.feed.filter((item) => item.time > 0);
+  updateDamageNumbers(dt);
+}
+
+function spawnDamageNumber(fighter, amount, kind) {
+  if (!game || !game.damageNumbers) return;
+  const rounded = Math.max(0, Math.round(amount));
+  for (const number of game.damageNumbers) {
+    if (number.fighterId === fighter.id && number.kind === kind && number.age < DAMAGE_NUMBER_MERGE_TIME) {
+      number.amount += rounded;
+      number.age = 0;
+      number.life = DAMAGE_NUMBER_LIFE;
+      return;
+    }
+  }
+  if (game.damageNumbers.length >= DAMAGE_NUMBER_MAX) game.damageNumbers.shift();
+  game.damageNumbers.push({
+    fighterId: fighter.id,
+    x: fighter.x + rand(-8, 8),
+    y: fighter.y - fighter.radius - 12,
+    vy: -55,
+    amount: rounded,
+    kind,
+    life: DAMAGE_NUMBER_LIFE,
+    age: 0,
+  });
+}
+
+function updateDamageNumbers(dt) {
+  if (!game.damageNumbers) return;
+  for (const number of game.damageNumbers) {
+    number.y += number.vy * dt;
+    number.vy *= Math.pow(0.3, dt);
+    number.life -= dt;
+    number.age += dt;
+  }
+  game.damageNumbers = game.damageNumbers.filter((number) => number.life > 0);
+}
+
+function drawDamageNumbers() {
+  if (!game.damageNumbers || !game.damageNumbers.length) return;
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (const number of game.damageNumbers) {
+    const big = number.kind === "health" && number.amount >= 40;
+    const size = (big ? 21 : 15) * Math.min(1, 0.6 + number.age * 4);
+    ctx.font = `900 ${size}px "Segoe UI", sans-serif`;
+    ctx.globalAlpha = clamp(number.life / DAMAGE_NUMBER_LIFE, 0, 1);
+    const text = number.kind === "blocked" ? "BLOQUE" : String(number.amount);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = IO_THEME.ink;
+    ctx.strokeText(text, number.x, number.y);
+    ctx.fillStyle = number.kind === "shield" ? "#4aa7ff" : number.kind === "blocked" ? "#f4cf67" : big ? "#ff9b73" : "#ffffff";
+    ctx.fillText(text, number.x, number.y);
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
 }
 
 function spawnParticle(x, y, color, life, speed) {
@@ -4249,12 +4696,14 @@ function updateZone(dt) {
     zone.mode = "waiting";
     zone.timer = zone.wait;
     addFeed("La zone est active");
+    sfxZoneWarn();
     return;
   }
 
   if (zone.mode === "waiting" && zone.timer <= 0) {
     zone.mode = "shrinking";
     zone.timer = zone.shrink;
+    sfxZoneWarn();
     zone.startX = zone.x;
     zone.startY = zone.y;
     zone.startRadius = zone.radius;
@@ -4374,6 +4823,8 @@ function stashEntryFromItem(item) {
 function endGame(won, details = {}) {
   if (!game || game.state !== "playing") return;
   game.state = "gameover";
+  resetFx();
+  sfxSting(won);
   if (won) profile.wins += 1;
   else profile.deaths += 1;
   profile.kills += game.player.kills;
@@ -4450,6 +4901,7 @@ function updateHud() {
   const weapon = getEquippedWeapon(player);
   const alive = standingFighters().length;
   ui.healthBar.style.transform = `scaleX(${clamp(player.downed ? player.downedHealth / player.downedMaxHealth : player.health / player.maxHealth, 0, 1)})`;
+  ui.healthBar.classList.toggle("low", player.alive && !player.downed && player.health < LOW_HP_THRESHOLD);
   ui.shieldBar.style.transform = `scaleX(${clamp(player.downed ? player.downedShield / DOWNED_PROTECTION_TIME : player.shield / player.maxShield, 0, 1)})`;
   ui.energyBar.style.transform = `scaleX(${clamp(player.energy / player.maxEnergy, 0, 1)})`;
   ui.aliveCount.textContent = game.teamSize > 1
@@ -4895,7 +5347,12 @@ function render() {
   }
 
   ctx.save();
-  ctx.translate(-game.camera.x, -game.camera.y);
+  const zoom = 1 + fx.zoomPunch;
+  ctx.translate(view.width / 2, view.height / 2);
+  ctx.rotate(fx.shakeAngle);
+  ctx.scale(zoom, zoom);
+  ctx.translate(-view.width / 2, -view.height / 2);
+  ctx.translate(-game.camera.x + fx.shakeX, -game.camera.y + fx.shakeY);
   drawWorld();
   if (game.zone.mode !== "hidden") drawZone();
   drawExtractionZones();
@@ -4908,7 +5365,9 @@ function render() {
   drawFighters();
   drawSmoke(true);
   drawParticles();
+  drawDamageNumbers();
   ctx.restore();
+  drawScreenFx();
   drawTeammateIndicators();
 }
 
@@ -6002,21 +6461,34 @@ function drawBullets() {
     const angle = Math.atan2(bullet.vy, bullet.vx);
     ctx.rotate(angle);
     ctx.lineCap = "round";
+    const speed = Math.hypot(bullet.vx, bullet.vy);
+    const traveled = bullet.spawnX === undefined
+      ? 60
+      : Math.hypot(bullet.x - bullet.spawnX, bullet.y - bullet.spawnY);
+    const tracer = Math.min(Math.max(traveled, 10), clamp(speed * 0.045, 16, 52));
+    ctx.globalAlpha = 0.28;
+    ctx.strokeStyle = bullet.color;
+    ctx.lineWidth = Math.max(2.6, bullet.radius * 0.9);
+    ctx.beginPath();
+    ctx.moveTo(-tracer * 1.9, 0);
+    ctx.lineTo(-tracer * 0.4, 0);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
     ctx.strokeStyle = IO_THEME.ink;
     ctx.lineWidth = Math.max(5, bullet.radius + 3);
     ctx.beginPath();
-    ctx.moveTo(-10, 0);
-    ctx.lineTo(8, 0);
+    ctx.moveTo(-tracer, 0);
+    ctx.lineTo(6, 0);
     ctx.stroke();
     ctx.strokeStyle = bullet.color;
     ctx.lineWidth = Math.max(3, bullet.radius);
     ctx.beginPath();
-    ctx.moveTo(-10, 0);
-    ctx.lineTo(8, 0);
+    ctx.moveTo(-tracer, 0);
+    ctx.lineTo(6, 0);
     ctx.stroke();
     ctx.fillStyle = "#fff7b7";
     ctx.beginPath();
-    ctx.arc(9, 0, 2.2, 0, TAU);
+    ctx.arc(7, 0, 2.2, 0, TAU);
     ctx.fill();
     ctx.restore();
   }
@@ -6086,6 +6558,63 @@ function drawTeammateIndicators() {
   ctx.restore();
 }
 
+let vignetteGradient = null;
+let vignetteKey = "";
+
+function drawScreenFx() {
+  if (!game || !game.player) return;
+  const player = game.player;
+  ctx.save();
+  ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
+
+  if (player.alive && !player.downed && player.health < LOW_HP_THRESHOLD) {
+    const key = `${view.width}x${view.height}`;
+    if (vignetteKey !== key) {
+      vignetteKey = key;
+      const inner = Math.min(view.width, view.height) * 0.34;
+      const outer = Math.hypot(view.width, view.height) * 0.62;
+      vignetteGradient = ctx.createRadialGradient(view.width / 2, view.height / 2, inner, view.width / 2, view.height / 2, outer);
+      vignetteGradient.addColorStop(0, "rgba(200, 20, 30, 0)");
+      vignetteGradient.addColorStop(1, "rgba(200, 20, 30, 1)");
+    }
+    const strength = 1 - player.health / LOW_HP_THRESHOLD;
+    ctx.globalAlpha = strength * (0.35 + 0.15 * Math.sin(game.elapsed * 6));
+    ctx.fillStyle = vignetteGradient;
+    ctx.fillRect(0, 0, view.width, view.height);
+    ctx.globalAlpha = 1;
+  }
+
+  if (fx.damageFlash > 0) {
+    const radius = Math.min(view.width, view.height) * 0.52;
+    ctx.globalAlpha = (fx.damageFlash / DAMAGE_FLASH_TIME) * 0.55;
+    ctx.strokeStyle = "#e8323f";
+    ctx.lineWidth = 70;
+    ctx.beginPath();
+    ctx.arc(view.width / 2, view.height / 2, radius, fx.damageFlashAngle - 0.75, fx.damageFlashAngle + 0.75);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  if (fx.killConfirm > 0 && fx.killConfirmText) {
+    const pop = clamp((1.1 - fx.killConfirm) * 10, 0, 1);
+    const alpha = clamp(fx.killConfirm / 0.35, 0, 1);
+    ctx.globalAlpha = alpha;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = `900 ${Math.round(20 + pop * 6)}px "Segoe UI", Inter, sans-serif`;
+    const text = `ELIMINE - ${fx.killConfirmText}`;
+    const y = view.height * 0.3;
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = IO_THEME.ink;
+    ctx.strokeText(text, view.width / 2, y);
+    ctx.fillStyle = "#f4cf67";
+    ctx.fillText(text, view.width / 2, y);
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.restore();
+}
+
 function drawFighter(fighter) {
   ctx.save();
   const stealthZone = getStealthZoneAt(fighter.x, fighter.y);
@@ -6108,6 +6637,17 @@ function drawFighter(fighter) {
   else ctx.arc(0, 0, fighter.radius, 0, TAU);
   ctx.fill();
   ctx.stroke();
+
+  if (fighter.hitFlash > 0) {
+    const baseAlpha = ctx.globalAlpha;
+    ctx.globalAlpha = baseAlpha * (fighter.hitFlash / HIT_FLASH_TIME) * 0.75;
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    if (fighter.downed) ctx.ellipse(0, 0, fighter.radius * 1.12, fighter.radius * 0.62, 0, 0, TAU);
+    else ctx.arc(0, 0, fighter.radius, 0, TAU);
+    ctx.fill();
+    ctx.globalAlpha = baseAlpha;
+  }
 
   ctx.fillStyle = "rgba(255, 255, 255, 0.42)";
   ctx.beginPath();
@@ -6525,8 +7065,13 @@ function renderKeybindButtons() {
 
 function loop(time) {
   const now = time / 1000;
-  const dt = Math.min(0.033, now - lastFrame || 0);
+  const rawDt = Math.min(0.033, now - lastFrame || 0);
   lastFrame = now;
+  let dt = rawDt;
+  if (fx.hitStop > 0) {
+    fx.hitStop -= rawDt;
+    dt = rawDt * HITSTOP_SCALE;
+  }
   update(dt);
   render();
   requestAnimationFrame(loop);
@@ -6772,6 +7317,7 @@ ui.renameButton.addEventListener("click", () => {
 
 ui.volumeSlider.addEventListener("input", () => {
   settings.volume = Number(ui.volumeSlider.value);
+  setMasterVolume();
   saveData();
 });
 
@@ -6796,6 +7342,17 @@ ui.bagCloseButton.addEventListener("pointerdown", (event) => {
   event.preventDefault();
   event.stopPropagation();
   toggleBagPanel(false);
+});
+
+window.addEventListener("pointerdown", unlockAudio);
+window.addEventListener("keydown", unlockAudio);
+document.addEventListener("visibilitychange", () => {
+  if (!AUDIO.ctx) return;
+  if (document.hidden) AUDIO.ctx.suspend();
+  else AUDIO.ctx.resume();
+});
+document.addEventListener("click", (event) => {
+  if (event.target.closest("button")) sfxUiClick();
 });
 
 ui.volumeSlider.value = settings.volume;

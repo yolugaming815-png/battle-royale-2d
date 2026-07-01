@@ -515,6 +515,15 @@ h2 {
   box-shadow: 0 0 12px rgba(255, 90, 102, 0.42);
 }
 
+.health span.low {
+  animation: hpPulse 0.9s ease-in-out infinite;
+}
+
+@keyframes hpPulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.65); }
+}
+
 .shield span {
   background: linear-gradient(90deg, #2678ff, #58f0cf);
   box-shadow: 0 0 12px rgba(83, 168, 255, 0.42);
