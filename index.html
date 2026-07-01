@@ -67,6 +67,7 @@
 
         <div class="player-card">
           <span id="playerName">Joueur</span>
+          <span id="playerLevel" class="level-badge">Niv. 1</span>
           <button id="renameButton" type="button">Rename</button>
         </div>
 
@@ -77,6 +78,10 @@
 
         <div id="menuPanels" class="menu-panels">
           <div class="menu-tab active" data-menu-panel="home">
+            <div class="daily-block">
+              <h3>Defis du jour</h3>
+              <div id="dailyList" class="daily-list"></div>
+            </div>
             <div class="controls">
               <span>ZQSD / WASD / fleches</span>
               <span>Souris pour viser</span>
@@ -147,11 +152,22 @@
           </div>
 
           <div class="menu-tab" data-menu-panel="skins">
+            <h3 class="cosmetic-title">Skins</h3>
             <div id="skinsGrid" class="skin-grid"></div>
+            <h3 class="cosmetic-title">Trainee de dash</h3>
+            <div id="trailsGrid" class="skin-grid"></div>
+            <h3 class="cosmetic-title">Pas</h3>
+            <div id="stepsGrid" class="skin-grid"></div>
           </div>
 
           <div class="menu-tab" data-menu-panel="shop">
-            <p class="lead compact">Boutique prete pour plus tard : skins, effets et objets cosmetiques pourront apparaitre ici.</p>
+            <div class="shop-head">
+              <span id="shopCredits">0 credits</span>
+            </div>
+            <h3 class="cosmetic-title">Vitrine du jour (-25 %)</h3>
+            <div id="showcaseGrid" class="skin-grid"></div>
+            <h3 class="cosmetic-title">Catalogue</h3>
+            <div id="shopGrid" class="skin-grid"></div>
           </div>
 
           <div class="menu-tab" data-menu-panel="locker">
@@ -182,12 +198,17 @@
         <p id="resultTag" class="eyebrow">partie terminee</p>
         <h2 id="resultTitle">Elimine</h2>
         <p id="resultStats" class="lead">Tu as termine dans le top 10.</p>
+        <div id="resultRewards" class="result-rewards"></div>
+        <div class="xp-bar"><span id="resultXpFill"></span></div>
+        <p id="resultXpLabel" class="xp-label"></p>
         <div class="menu-actions">
           <button id="retryButton" type="button">Rejouer</button>
           <button id="menuButton" type="button">Menu</button>
         </div>
       </div>
     </section>
+
+    <div id="toasts" class="toasts" aria-live="polite"></div>
 
     <script src="game.js"></script>
   </body>

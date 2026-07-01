@@ -203,7 +203,7 @@ h2 {
 
 .player-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 12px;
   margin: 18px 0;
@@ -294,6 +294,186 @@ h2 {
   align-items: center;
   gap: 8px;
   color: #f7f4e7;
+}
+
+.shop-card {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  border-left: 3px solid var(--rarity, rgba(255, 255, 255, 0.1));
+}
+
+.shop-card .rarity-tag {
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.shop-card .card-action {
+  font-size: 0.82rem;
+  font-weight: 900;
+  color: var(--gold);
+}
+
+.shop-card .card-action s {
+  opacity: 0.55;
+  margin-right: 4px;
+}
+
+.shop-head {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+  color: var(--gold);
+  font-weight: 950;
+}
+
+.cosmetic-title {
+  margin: 14px 0 8px;
+  color: #d8dee2;
+  font-size: 0.86rem;
+  font-weight: 950;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.level-badge {
+  justify-self: end;
+  border: 1px solid rgba(255, 212, 94, 0.4);
+  border-radius: 999px;
+  padding: 3px 10px;
+  background: rgba(255, 212, 94, 0.12);
+  color: var(--gold);
+  font-size: 0.8rem !important;
+  font-weight: 950;
+}
+
+.daily-block h3 {
+  margin: 0 0 8px;
+  color: #d8dee2;
+  font-size: 0.86rem;
+  font-weight: 950;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.daily-list {
+  display: grid;
+  gap: 8px;
+}
+
+.daily-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 9px 10px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.035)),
+    rgba(7, 10, 15, 0.72);
+  color: #f7f4e7;
+  font-weight: 850;
+  font-size: 0.86rem;
+}
+
+.daily-card.done {
+  border-color: rgba(88, 240, 207, 0.4);
+  opacity: 0.75;
+}
+
+.daily-card .daily-reward {
+  color: var(--gold);
+  font-size: 0.76rem;
+}
+
+.daily-card.done .daily-reward {
+  color: var(--teal);
+}
+
+.daily-progress {
+  display: block;
+  overflow: hidden;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.daily-progress span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--gold), #ffae34);
+  transition: width 220ms ease;
+}
+
+.daily-count {
+  color: #d6dce0;
+  font-size: 0.74rem;
+  text-align: right;
+}
+
+.result-rewards {
+  display: grid;
+  gap: 4px;
+  margin: 12px 0;
+  color: var(--gold);
+  font-weight: 900;
+  font-size: 0.92rem;
+}
+
+.xp-bar {
+  overflow: hidden;
+  height: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.xp-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #58f0cf, #53a8ff);
+  transition: width 500ms ease;
+}
+
+.xp-label {
+  margin: 6px 0 12px;
+  color: #d6dce0;
+  font-size: 0.84rem;
+  font-weight: 850;
+}
+
+.toasts {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  z-index: 60;
+  display: grid;
+  gap: 8px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.toast {
+  border: 1px solid rgba(255, 212, 94, 0.45);
+  border-radius: 8px;
+  padding: 10px 16px;
+  background: rgba(7, 10, 15, 0.92);
+  color: var(--gold);
+  font-weight: 950;
+  font-size: 0.9rem;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  animation: toastIn 220ms ease, toastOut 400ms ease 2.8s forwards;
+}
+
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes toastOut {
+  to { opacity: 0; transform: translateY(-8px); }
 }
 
 .mode-card {

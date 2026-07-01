@@ -46,6 +46,17 @@ const ui = {
   resultTag: document.querySelector("#resultTag"),
   resultTitle: document.querySelector("#resultTitle"),
   resultStats: document.querySelector("#resultStats"),
+  playerLevel: document.querySelector("#playerLevel"),
+  trailsGrid: document.querySelector("#trailsGrid"),
+  stepsGrid: document.querySelector("#stepsGrid"),
+  shopGrid: document.querySelector("#shopGrid"),
+  showcaseGrid: document.querySelector("#showcaseGrid"),
+  shopCredits: document.querySelector("#shopCredits"),
+  dailyList: document.querySelector("#dailyList"),
+  resultRewards: document.querySelector("#resultRewards"),
+  resultXpFill: document.querySelector("#resultXpFill"),
+  resultXpLabel: document.querySelector("#resultXpLabel"),
+  toasts: document.querySelector("#toasts"),
 };
 
 const WORLD = { width: 10000, height: 10000 };
@@ -333,13 +344,109 @@ const profile = {
   credits: 0,
   stash: [],
   extractionLoadout: [],
+  xp: 0,
+  ownedSkins: ["gold", "mint", "ember", "violet"],
+  ownedTrails: ["default"],
+  ownedSteps: ["default"],
+  equippedTrail: "default",
+  equippedSteps: "default",
+  daily: { dateKey: "", challengeIds: [], progress: [0, 0, 0], claimed: [false, false, false] },
+  stats: {
+    shotsFired: 0,
+    shotsHit: 0,
+    damageDealt: 0,
+    longestKill: 0,
+    distanceTraveled: 0,
+    chestsOpened: 0,
+    bestKillStreak: 0,
+  },
+  nemesis: null,
+  nemesisDefeated: 0,
 };
 
-const skins = [
-  { id: "gold", label: "Survivant", color: "#ffd83d" },
-  { id: "mint", label: "Recon", color: "#43d17b" },
-  { id: "ember", label: "Ember", color: "#ff8c27" },
-  { id: "violet", label: "Violet", color: "#8f5bff" },
+const SKIN_CATALOG = [
+  { id: "gold", label: "Survivant", color: "#ffd83d", rarity: "common", price: 0 },
+  { id: "mint", label: "Recon", color: "#43d17b", rarity: "common", price: 0 },
+  { id: "ember", label: "Ember", color: "#ff8c27", rarity: "common", price: 0 },
+  { id: "violet", label: "Violet", color: "#8f5bff", rarity: "common", price: 0 },
+  { id: "steel", label: "Acier", color: "#9fb4c7", rarity: "uncommon", price: 400 },
+  { id: "toxic", label: "Toxique", color: "#a8e63c", rarity: "uncommon", price: 400 },
+  { id: "coral", label: "Corail", color: "#ff6f91", rarity: "rare", price: 900 },
+  { id: "abyss", label: "Abysse", color: "#2456c9", rarity: "rare", price: 900 },
+  { id: "sakura", label: "Sakura", color: "#ffb7d5", rarity: "epic", price: 1800 },
+  { id: "onyx", label: "Onyx", color: "#3a3f4a", rarity: "epic", price: 1800 },
+  { id: "solar", label: "Solaire", color: "#ff4d1c", rarity: "legendary", price: 3500 },
+  { id: "prism", label: "Prisme", color: "#7df0e6", rarity: "legendary", price: 3500 },
+  { id: "veteran", label: "Veteran", color: "#c9a227", rarity: "epic", unlockLevel: 10 },
+  { id: "apex", label: "Apex", color: "#f4f7fb", rarity: "legendary", unlockLevel: 20 },
+];
+
+const TRAIL_CATALOG = [
+  { id: "default", label: "Classique", color: "#f4cf67", rarity: "common", price: 0 },
+  { id: "frost", label: "Givre", color: "#8ee9ff", rarity: "uncommon", price: 300 },
+  { id: "venom", label: "Venin", color: "#a8e63c", rarity: "rare", price: 700 },
+  { id: "royal", label: "Royal", color: "#b39cff", rarity: "epic", price: 1400 },
+];
+
+const STEP_CATALOG = [
+  { id: "default", label: "Aucune", color: null, rarity: "common", price: 0 },
+  { id: "dust", label: "Poussiere", color: "#d6d1ba", rarity: "uncommon", price: 300 },
+  { id: "ember", label: "Braises", color: "#ff9b73", rarity: "rare", price: 700 },
+];
+
+const REWARDS = {
+  creditKill: 15,
+  creditWin: 100,
+  creditExtract: 60,
+  xpBase: 50,
+  xpKill: 30,
+  xpOutlast: 5,
+  xpWin: 150,
+};
+
+function placementCreditBonus(placement) {
+  if (placement <= 3) return 50;
+  if (placement <= 5) return 30;
+  if (placement <= 10) return 15;
+  return 0;
+}
+
+function xpNeededFor(level) {
+  return 75 * level + 25 * level * level;
+}
+
+function levelForXp(xp) {
+  let level = 1;
+  let remaining = Math.max(0, xp);
+  while (remaining >= xpNeededFor(level)) {
+    remaining -= xpNeededFor(level);
+    level += 1;
+  }
+  return { level, into: remaining, next: xpNeededFor(level) };
+}
+
+function levelUpCredits(level) {
+  return 50 + level * 10;
+}
+
+const LEVEL_SKIN_UNLOCKS = { 10: "veteran", 20: "apex" };
+
+const DAILY_CHALLENGES = [
+  { id: "kills3", label: "Elimine 3 adversaires", type: "counter", event: "kill", goal: 3, credits: 120, xp: 80 },
+  { id: "shotgun2", label: "2 elim. au fusil a pompe", type: "counter", event: "kill", weapon: "shotgun", goal: 2, credits: 150, xp: 100 },
+  { id: "sniper2", label: "2 elim. au sniper", type: "counter", event: "kill", weapon: "sniper", goal: 2, credits: 150, xp: 100 },
+  { id: "smg3", label: "3 elim. a la mitraillette", type: "counter", event: "kill", weapon: "smg", goal: 3, credits: 150, xp: 100 },
+  { id: "longshot", label: "1 elim. a plus de 60 m", type: "counter", event: "kill", minDistance: 600, goal: 1, credits: 160, xp: 110 },
+  { id: "chests5", label: "Ouvre 5 coffres", type: "counter", event: "chest", goal: 5, credits: 100, xp: 80 },
+  { id: "walls10", label: "Construis 10 murs", type: "counter", event: "wall", goal: 10, credits: 100, xp: 70 },
+  { id: "damage500", label: "Inflige 500 degats", type: "match", stat: "damageDealt", goal: 500, credits: 120, xp: 90 },
+  { id: "walk3k", label: "Parcours 3000 m", type: "match", stat: "distanceMeters", goal: 3000, credits: 100, xp: 70 },
+  { id: "mats300", label: "Recolte 300 materiaux", type: "match", stat: "materialsHarvested", goal: 300, credits: 100, xp: 70 },
+  { id: "top5", label: "Termine top 5", type: "match", check: "top5", goal: 1, credits: 130, xp: 90 },
+  { id: "top5nobuild", label: "Top 5 sans construire", type: "match", check: "top5nobuild", goal: 1, credits: 180, xp: 130 },
+  { id: "win1", label: "Gagne une partie", type: "match", check: "win", goal: 1, credits: 250, xp: 200 },
+  { id: "winnomed", label: "Gagne sans medikit", type: "match", check: "winnomed", goal: 1, credits: 250, xp: 180 },
+  { id: "survive5", label: "Survis 5 minutes", type: "match", check: "survive5", goal: 1, credits: 100, xp: 80 },
 ];
 
 const settings = {
@@ -364,6 +471,9 @@ function loadSavedData() {
     if (!raw) return;
     const saved = JSON.parse(raw);
     if (saved.profile && typeof saved.profile === "object") {
+      const savedDaily = saved.profile.daily && typeof saved.profile.daily === "object" ? saved.profile.daily : {};
+      const savedStats = saved.profile.stats && typeof saved.profile.stats === "object" ? saved.profile.stats : {};
+      const savedNemesis = saved.profile.nemesis && typeof saved.profile.nemesis === "object" ? saved.profile.nemesis : null;
       Object.assign(profile, {
         name: typeof saved.profile.name === "string" ? saved.profile.name : profile.name,
         kills: Number(saved.profile.kills) || 0,
@@ -374,7 +484,46 @@ function loadSavedData() {
         credits: Number(saved.profile.credits) || 0,
         stash: Array.isArray(saved.profile.stash) ? saved.profile.stash : [],
         extractionLoadout: Array.isArray(saved.profile.extractionLoadout) ? saved.profile.extractionLoadout : [],
+        xp: Number(saved.profile.xp) || 0,
+        ownedSkins: Array.isArray(saved.profile.ownedSkins) && saved.profile.ownedSkins.length
+          ? saved.profile.ownedSkins.filter((id) => typeof id === "string")
+          : ["gold", "mint", "ember", "violet"],
+        ownedTrails: Array.isArray(saved.profile.ownedTrails) && saved.profile.ownedTrails.length
+          ? saved.profile.ownedTrails.filter((id) => typeof id === "string")
+          : ["default"],
+        ownedSteps: Array.isArray(saved.profile.ownedSteps) && saved.profile.ownedSteps.length
+          ? saved.profile.ownedSteps.filter((id) => typeof id === "string")
+          : ["default"],
+        equippedTrail: typeof saved.profile.equippedTrail === "string" ? saved.profile.equippedTrail : "default",
+        equippedSteps: typeof saved.profile.equippedSteps === "string" ? saved.profile.equippedSteps : "default",
+        daily: {
+          dateKey: typeof savedDaily.dateKey === "string" ? savedDaily.dateKey : "",
+          challengeIds: Array.isArray(savedDaily.challengeIds) ? savedDaily.challengeIds : [],
+          progress: Array.isArray(savedDaily.progress) ? savedDaily.progress.map((value) => Number(value) || 0) : [0, 0, 0],
+          claimed: Array.isArray(savedDaily.claimed) ? savedDaily.claimed.map(Boolean) : [false, false, false],
+        },
+        stats: {
+          shotsFired: Number(savedStats.shotsFired) || 0,
+          shotsHit: Number(savedStats.shotsHit) || 0,
+          damageDealt: Number(savedStats.damageDealt) || 0,
+          longestKill: Number(savedStats.longestKill) || 0,
+          distanceTraveled: Number(savedStats.distanceTraveled) || 0,
+          chestsOpened: Number(savedStats.chestsOpened) || 0,
+          bestKillStreak: Number(savedStats.bestKillStreak) || 0,
+        },
+        nemesis: savedNemesis && typeof savedNemesis.name === "string"
+          ? {
+            name: savedNemesis.name,
+            archetype: typeof savedNemesis.archetype === "string" ? savedNemesis.archetype : "rusher",
+            killsOnPlayer: clamp(Number(savedNemesis.killsOnPlayer) || 1, 1, 3),
+            encounters: Number(savedNemesis.encounters) || 0,
+          }
+          : null,
+        nemesisDefeated: Number(saved.profile.nemesisDefeated) || 0,
       });
+      if (!profile.ownedSkins.includes(profile.skin)) profile.skin = "gold";
+      if (!profile.ownedTrails.includes(profile.equippedTrail)) profile.equippedTrail = "default";
+      if (!profile.ownedSteps.includes(profile.equippedSteps)) profile.equippedSteps = "default";
     }
     if (saved.settings && typeof saved.settings === "object") {
       settings.volume = Number(saved.settings.volume) || settings.volume;
@@ -740,6 +889,31 @@ function pick(list) {
   return list[Math.floor(Math.random() * list.length)];
 }
 
+function mulberry32(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function todayKey() {
+  const date = new Date();
+  return date.getFullYear() * 10000 + (date.getMonth() + 1) * 100 + date.getDate();
+}
+
+function seededPick(list, count, rng) {
+  const pool = [...list];
+  for (let i = pool.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rng() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.slice(0, count);
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -1100,6 +1274,10 @@ function tryBuildWall(player, options = {}) {
   addObstacleToGrid(wall);
   game.navGrid = null;
   spawnHit(rect.x + rect.w / 2, rect.y + rect.h / 2, mat.color, 8);
+  if (player.isPlayer && game.matchStats) {
+    game.matchStats.wallsBuilt += 1;
+    notifyChallenge("wall");
+  }
   if (!options.quiet) {
     addFeed(`Mur ${mat.label.toLowerCase()} construit`);
     updateHud();
@@ -1157,7 +1335,7 @@ function makeFighter(name, x, y, isPlayer = false, options = {}) {
     isPlayer,
     isTeammate: Boolean(options.isTeammate),
     teamId: options.teamId || (isPlayer ? PLAYER_TEAM_ID : makeId("team")),
-    color: options.color || (isPlayer ? (skins.find((skin) => skin.id === profile.skin) || skins[0]).color : pick(["#e83c3c", "#2f91ff", "#43d17b", "#ff8c27", "#8f5bff", "#f0469e"])),
+    color: options.color || (isPlayer ? getSkinById(profile.skin).color : pick(["#e83c3c", "#2f91ff", "#43d17b", "#ff8c27", "#8f5bff", "#f0469e"])),
     health: 100,
     maxHealth: 100,
     shield: isPlayer ? 40 : rand(0, 35),
@@ -1353,6 +1531,21 @@ function newGame(mode = lastGameMode, teamSize = 1) {
     placement: totalCount,
     feed: [],
     elapsed: 0,
+    matchStats: {
+      shotsFired: 0,
+      shotsHit: 0,
+      damageDealt: 0,
+      longestKill: 0,
+      distance: 0,
+      chestsOpened: 0,
+      wallsBuilt: 0,
+      medkitsUsed: 0,
+      killStreak: 0,
+      bestKillStreak: 0,
+      materialsHarvested: 0,
+      timeAlive: 0,
+      rewardsGranted: false,
+    },
     minimapTimer: 0,
     hotbarSignature: "",
     feedSignature: "",
@@ -2112,11 +2305,15 @@ function randomMaterialType() {
   return pick(MATERIAL_ORDER);
 }
 
-function openChest(chest) {
+function openChest(chest, opener) {
   if (chest.opened) return;
   chest.opened = true;
   spawnHit(chest.x, chest.y, "#f4cf67", 18);
   sfxChest(chest.x, chest.y);
+  if (opener && opener.isPlayer && game.matchStats) {
+    game.matchStats.chestsOpened += 1;
+    notifyChallenge("chest");
+  }
 
   const primaryWeapon = randomWeaponType();
   const drops = [
@@ -2166,7 +2363,7 @@ function updateChests(dt) {
 
     for (const fighter of aliveFighters()) {
       if (distance(fighter, chest) <= fighter.radius + chest.radius + 10) {
-        openChest(chest);
+        openChest(chest, fighter);
         break;
       }
     }
@@ -2230,6 +2427,7 @@ function update(dt) {
   updateExtraction(dt);
   updateScreenFx(dt);
   updateGameAudio(dt);
+  if (game.matchStats && game.player.alive) game.matchStats.timeAlive += dt;
   updateCamera();
   checkVictory();
   game.minimapTimer += dt;
@@ -2280,11 +2478,20 @@ function updatePlayer(dt) {
     speed = DASH_SPEED;
     moveX = player.dashX;
     moveY = player.dashY;
-    spawnParticle(player.x - moveX * 14, player.y - moveY * 14, "#f4cf67", 0.22, 16);
+    spawnParticle(player.x - moveX * 14, player.y - moveY * 14, playerTrailColor(), 0.22, 16);
   }
   speed *= terrainSpeedMultiplier(player);
 
   moveFighter(player, moveX * speed * dt, moveY * speed * dt);
+
+  const stepColor = playerStepColor();
+  if (stepColor && (moveX || moveY) && player.dashTime <= 0) {
+    player.stepTimer = (player.stepTimer || 0) - dt;
+    if (player.stepTimer <= 0) {
+      player.stepTimer = 0.18;
+      spawnParticle(player.x, player.y + 10, stepColor, 0.3, 8);
+    }
+  }
 
   const actionPressed = mouse.down || keys.has("Space") || touchInput.firing;
   const activeItem = getActiveItem(player);
@@ -3571,6 +3778,7 @@ function getSmokeAt(x, y) {
 
 function moveFighter(fighter, dx, dy) {
   if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
+  if (fighter.isPlayer && game && game.matchStats) game.matchStats.distance += Math.hypot(dx, dy);
   fighter.x += dx;
   resolveFighterCollision(fighter);
   fighter.y += dy;
@@ -3688,6 +3896,7 @@ function tryShoot(fighter, baseAngle) {
 
   setMagazine(fighter, currentMag - 1);
   fighter.cooldown = getWeaponCooldown(weaponKey, rarity);
+  if (fighter.isPlayer && game.matchStats) game.matchStats.shotsFired += weapon.pellets;
 
   for (let i = 0; i < weapon.pellets; i += 1) {
     const spread = getWeaponSpread(weaponKey, rarity);
@@ -3706,6 +3915,7 @@ function tryShoot(fighter, baseAngle) {
       damage: getWeaponDamage(weaponKey, rarity),
       owner: fighter,
       color: weapon.color,
+      weaponType: weaponKey,
     });
   }
 
@@ -3744,6 +3954,10 @@ function swingMelee(fighter, baseAngle, weapon, rarity = "common") {
     if (delta > weapon.arc / 2) continue;
     if (!hasLineOfSight(fighter, target)) continue;
 
+    if (fighter.isPlayer) {
+      fighter.lastHitDistance = targetDistance;
+      fighter.lastHitWeapon = getEquippedWeaponKey(fighter);
+    }
     damageFighter(target, getWeaponDamage(getEquippedWeaponKey(fighter), rarity), fighter);
     spawnHit(
       target.x - Math.cos(baseAngle) * target.radius * 0.4,
@@ -3810,6 +4024,7 @@ function damageObstacle(obstacle, amount, source) {
     const gain = Math.min(obstacle.materialAmount, Math.max(4, Math.ceil((obstacle.maxHealth || 60) / 10)));
     obstacle.materialAmount -= gain;
     changeMaterial(source, material, gain);
+    if (game && game.matchStats) game.matchStats.materialsHarvested += gain;
     addFeed(`+${gain} ${MATERIALS[material].label.toLowerCase()}`);
   }
 
@@ -3818,6 +4033,7 @@ function damageObstacle(obstacle, amount, source) {
   if (obstacle.health <= 0) {
     if (source && source.isPlayer && material && obstacle.materialAmount > 0) {
       changeMaterial(source, material, obstacle.materialAmount);
+      if (game && game.matchStats) game.matchStats.materialsHarvested += obstacle.materialAmount;
       addFeed(`+${obstacle.materialAmount} ${MATERIALS[material].label.toLowerCase()}`);
     }
     game.obstacles = game.obstacles.filter((item) => item !== obstacle);
@@ -3850,6 +4066,11 @@ function updateBullets(dt) {
       if (sameTeam(fighter, bullet.owner)) continue;
       if (Math.hypot(fighter.x - bullet.x, fighter.y - bullet.y) < fighter.radius + bullet.radius) {
         bullet.life = -1;
+        if (bullet.owner && bullet.owner.isPlayer && game.matchStats) {
+          game.matchStats.shotsHit += 1;
+          bullet.owner.lastHitDistance = Math.hypot(bullet.x - bullet.spawnX, bullet.y - bullet.spawnY);
+          bullet.owner.lastHitWeapon = bullet.weaponType;
+        }
         damageFighter(fighter, bullet.damage, bullet.owner);
         spawnHit(bullet.x, bullet.y, bullet.color, 9);
         break;
@@ -3886,7 +4107,10 @@ function damageFighter(fighter, amount, source) {
     fighter.hitFlash = HIT_FLASH_TIME;
     spawnHit(fighter.x, fighter.y, "#ff5a66", 8);
     sfxHit(fighter.x, fighter.y, false);
-    if (source && source.isPlayer) spawnDamageNumber(fighter, amount, "health");
+    if (source && source.isPlayer) {
+      spawnDamageNumber(fighter, amount, "health");
+      if (game.matchStats) game.matchStats.damageDealt += amount;
+    }
     if (fighter.downedHealth <= 0) eliminateFighter(fighter, source);
     return;
   }
@@ -3916,6 +4140,7 @@ function damageFighter(fighter, amount, source) {
   if (source && source.isPlayer) {
     if (shieldAbsorbed > 0) spawnDamageNumber(fighter, shieldAbsorbed, "shield");
     if (remaining > 0) spawnDamageNumber(fighter, remaining, "health");
+    if (game.matchStats) game.matchStats.damageDealt += shieldAbsorbed + remaining;
   }
   if (fighter.isPlayer) {
     addTrauma(TRAUMA_PLAYER_HIT);
@@ -4022,6 +4247,12 @@ function eliminateFighter(fighter, source, storm = false) {
     fx.killConfirm = 1.1;
     fx.killConfirmText = fighter.name;
     addTrauma(0.12);
+    if (game.matchStats) {
+      game.matchStats.killStreak += 1;
+      game.matchStats.bestKillStreak = Math.max(game.matchStats.bestKillStreak, game.matchStats.killStreak);
+      game.matchStats.longestKill = Math.max(game.matchStats.longestKill, source.lastHitDistance || 0);
+    }
+    notifyChallenge("kill", { weapon: source.lastHitWeapon, distance: source.lastHitDistance || 0 });
   }
 
   if (source && source.alive) {
@@ -4510,8 +4741,12 @@ function updateConsumableUse(fighter, dt, actionPressed) {
     fighter.hotbar[fighter.activeSlot] = null;
     fighter.useHold = null;
     if (fighter.isPlayer) {
-      if (item.type === "medkit") sfxHeal();
-      else sfxShieldUse();
+      if (item.type === "medkit") {
+        sfxHeal();
+        if (game.matchStats) game.matchStats.medkitsUsed += 1;
+      } else {
+        sfxShieldUse();
+      }
     }
     if (fighter.isPlayer || fighter.isTeammate) addFeed(`${consumable.label} utilise`);
   }
@@ -4820,6 +5055,165 @@ function stashEntryFromItem(item) {
   return { label, color, price, kind: item.kind, type: item.type, rarity: item.rarity };
 }
 
+function showToast(text) {
+  if (!ui.toasts) return;
+  const toast = document.createElement("div");
+  toast.className = "toast";
+  toast.textContent = text;
+  ui.toasts.appendChild(toast);
+  window.setTimeout(() => toast.remove(), 3200);
+}
+
+function refreshDailyChallenges() {
+  const key = String(todayKey());
+  if (profile.daily.dateKey === key && profile.daily.challengeIds.length === 3) return;
+  const rng = mulberry32(todayKey());
+  profile.daily = {
+    dateKey: key,
+    challengeIds: seededPick(DAILY_CHALLENGES.map((challenge) => challenge.id), 3, rng),
+    progress: [0, 0, 0],
+    claimed: [false, false, false],
+  };
+  saveData();
+}
+
+function getActiveChallenges() {
+  refreshDailyChallenges();
+  return profile.daily.challengeIds.map((id, index) => ({
+    def: DAILY_CHALLENGES.find((challenge) => challenge.id === id),
+    progress: profile.daily.progress[index] || 0,
+    claimed: Boolean(profile.daily.claimed[index]),
+    index,
+  })).filter((entry) => entry.def);
+}
+
+function addChallengeProgress(index, amount) {
+  const def = DAILY_CHALLENGES.find((challenge) => challenge.id === profile.daily.challengeIds[index]);
+  if (!def || profile.daily.claimed[index]) return;
+  profile.daily.progress[index] = Math.min(def.goal, (profile.daily.progress[index] || 0) + amount);
+  if (profile.daily.progress[index] >= def.goal) {
+    profile.daily.claimed[index] = true;
+    profile.credits += def.credits;
+    profile.xp += def.xp;
+    showToast(`Defi accompli : ${def.label} (+${def.credits} cr, +${def.xp} XP)`);
+    if (game && game.state === "playing") addFeed(`Defi accompli : ${def.label}`);
+  }
+  saveData();
+  renderDailyChallenges();
+}
+
+function notifyChallenge(event, data = {}) {
+  for (const entry of getActiveChallenges()) {
+    if (entry.claimed || entry.def.type !== "counter" || entry.def.event !== event) continue;
+    if (entry.def.weapon && data.weapon !== entry.def.weapon) continue;
+    if (entry.def.minDistance && (data.distance || 0) < entry.def.minDistance) continue;
+    addChallengeProgress(entry.index, 1);
+  }
+}
+
+function evaluateMatchChallenges(won) {
+  const stats = game.matchStats;
+  if (!stats) return;
+  for (const entry of getActiveChallenges()) {
+    if (entry.claimed || entry.def.type !== "match") continue;
+    const def = entry.def;
+    if (def.stat === "damageDealt") addChallengeProgress(entry.index, Math.round(stats.damageDealt));
+    else if (def.stat === "distanceMeters") addChallengeProgress(entry.index, Math.round(stats.distance / 10));
+    else if (def.stat === "materialsHarvested") addChallengeProgress(entry.index, stats.materialsHarvested);
+    else if (def.check === "top5" && game.placement <= 5 && game.mode !== "extraction") addChallengeProgress(entry.index, 1);
+    else if (def.check === "top5nobuild" && game.placement <= 5 && stats.wallsBuilt === 0 && game.mode !== "extraction") addChallengeProgress(entry.index, 1);
+    else if (def.check === "win" && won) addChallengeProgress(entry.index, 1);
+    else if (def.check === "winnomed" && won && stats.medkitsUsed === 0) addChallengeProgress(entry.index, 1);
+    else if (def.check === "survive5" && stats.timeAlive >= 300) addChallengeProgress(entry.index, 1);
+  }
+}
+
+function renderDailyChallenges() {
+  if (!ui.dailyList) return;
+  ui.dailyList.innerHTML = "";
+  for (const entry of getActiveChallenges()) {
+    const card = document.createElement("div");
+    card.className = `daily-card${entry.claimed ? " done" : ""}`;
+    const ratio = clamp(entry.progress / entry.def.goal, 0, 1);
+    card.innerHTML = `
+      <span class="daily-label">${entry.def.label}</span>
+      <span class="daily-reward">${entry.claimed ? "Termine" : `+${entry.def.credits} cr / +${entry.def.xp} XP`}</span>
+      <span class="daily-progress"><span style="width:${Math.round(ratio * 100)}%"></span></span>
+      <span class="daily-count">${Math.min(entry.progress, entry.def.goal)}/${entry.def.goal}</span>
+    `;
+    ui.dailyList.appendChild(card);
+  }
+}
+
+function finalizeMatchStats() {
+  const stats = game.matchStats;
+  if (!stats || stats.finalized) return;
+  stats.finalized = true;
+  profile.stats.shotsFired += stats.shotsFired;
+  profile.stats.shotsHit += stats.shotsHit;
+  profile.stats.damageDealt += Math.round(stats.damageDealt);
+  profile.stats.longestKill = Math.max(profile.stats.longestKill, stats.longestKill);
+  profile.stats.distanceTraveled += stats.distance;
+  profile.stats.chestsOpened += stats.chestsOpened;
+  profile.stats.bestKillStreak = Math.max(profile.stats.bestKillStreak, stats.bestKillStreak);
+}
+
+function computeMatchRewards(won, details) {
+  const kills = game.player.kills;
+  const lines = [];
+  let credits = kills * REWARDS.creditKill;
+  if (kills > 0) lines.push(`+${kills * REWARDS.creditKill} credits (${kills} elim.)`);
+  if (won) {
+    credits += REWARDS.creditWin;
+    lines.push(`+${REWARDS.creditWin} credits (victoire)`);
+  } else if (game.mode !== "extraction") {
+    const bonus = placementCreditBonus(game.placement);
+    if (bonus > 0) {
+      credits += bonus;
+      lines.push(`+${bonus} credits (top ${game.placement})`);
+    }
+  }
+  if (details.extracted) {
+    credits += REWARDS.creditExtract;
+    lines.push(`+${REWARDS.creditExtract} credits (extraction)`);
+  }
+  let xp = REWARDS.xpBase + kills * REWARDS.xpKill;
+  if (game.mode !== "extraction") xp += Math.max(0, game.totalPlayers - game.placement) * REWARDS.xpOutlast;
+  if (won) xp += REWARDS.xpWin;
+  lines.push(`+${xp} XP`);
+  return { credits, xp, lines };
+}
+
+function applyLevelUps(prevXp, newXp) {
+  const before = levelForXp(prevXp).level;
+  const after = levelForXp(newXp).level;
+  const lines = [];
+  for (let level = before + 1; level <= after; level += 1) {
+    const bonus = levelUpCredits(level);
+    profile.credits += bonus;
+    lines.push(`Niveau ${level} atteint : +${bonus} credits`);
+    const skinId = LEVEL_SKIN_UNLOCKS[level];
+    if (skinId && !profile.ownedSkins.includes(skinId)) {
+      profile.ownedSkins.push(skinId);
+      lines.push(`Skin ${getSkinById(skinId).label} debloque !`);
+    }
+  }
+  return lines;
+}
+
+function renderMatchRewards(rewards, levelLines) {
+  if (!ui.resultRewards) return;
+  ui.resultRewards.innerHTML = "";
+  for (const line of [...rewards.lines, ...levelLines]) {
+    const item = document.createElement("span");
+    item.textContent = line;
+    ui.resultRewards.appendChild(item);
+  }
+  const info = levelForXp(profile.xp);
+  if (ui.resultXpFill) ui.resultXpFill.style.width = `${Math.round((info.into / info.next) * 100)}%`;
+  if (ui.resultXpLabel) ui.resultXpLabel.textContent = `Niveau ${info.level} - ${info.into}/${info.next} XP`;
+}
+
 function endGame(won, details = {}) {
   if (!game || game.state !== "playing") return;
   game.state = "gameover";
@@ -4828,6 +5222,15 @@ function endGame(won, details = {}) {
   if (won) profile.wins += 1;
   else profile.deaths += 1;
   profile.kills += game.player.kills;
+  finalizeMatchStats();
+  evaluateMatchChallenges(won);
+  const rewards = computeMatchRewards(won, details);
+  const prevXp = profile.xp;
+  profile.credits += rewards.credits;
+  profile.xp += rewards.xp;
+  const levelLines = applyLevelUps(prevXp, profile.xp);
+  renderMatchRewards(rewards, levelLines);
+  renderDailyChallenges();
   saveData();
   renderProfile();
   resetTouchInput();
@@ -6862,6 +7265,7 @@ function showMenu() {
   ui.menu.classList.remove("hidden");
   showMenuTab("home");
   renderProfile();
+  renderDailyChallenges();
 }
 
 function showMenuTab(tab) {
@@ -6873,9 +7277,17 @@ function showMenuTab(tab) {
 
 function renderProfile() {
   ui.playerName.textContent = profile.name;
+  const info = levelForXp(profile.xp);
+  if (ui.playerLevel) ui.playerLevel.textContent = `Niv. ${info.level}`;
   const kd = profile.deaths === 0 ? profile.kills : profile.kills / profile.deaths;
+  const stats = profile.stats;
+  const accuracy = stats.shotsFired > 0 ? Math.round((stats.shotsHit / stats.shotsFired) * 100) : 0;
+  const nemesisLine = profile.nemesis
+    ? `<span>Nemesis: ${profile.nemesis.name} (${profile.nemesis.killsOnPlayer} kill${profile.nemesis.killsOnPlayer > 1 ? "s" : ""})</span>`
+    : "";
   ui.profileStats.innerHTML = `
     <span>Nom: ${profile.name}</span>
+    <span>Niveau: ${info.level} (${info.into}/${info.next} XP)</span>
     <span>Credits: ${profile.credits}</span>
     <span>Casier: ${profile.stash.length} objet${profile.stash.length > 1 ? "s" : ""}</span>
     <span>Parties: ${profile.games}</span>
@@ -6883,6 +7295,14 @@ function renderProfile() {
     <span>Eliminations: ${profile.kills}</span>
     <span>Morts: ${profile.deaths}</span>
     <span>K/D: ${kd.toFixed(2)}</span>
+    <span>Precision: ${accuracy} %</span>
+    <span>Degats infliges: ${Math.round(stats.damageDealt)}</span>
+    <span>Plus longue elim.: ${Math.round(stats.longestKill / 10)} m</span>
+    <span>Distance: ${(stats.distanceTraveled / 10 / 1000).toFixed(1)} km</span>
+    <span>Coffres ouverts: ${stats.chestsOpened}</span>
+    <span>Meilleur streak: ${stats.bestKillStreak}</span>
+    <span>Nemesis vaincues: ${profile.nemesisDefeated}</span>
+    ${nemesisLine}
   `;
   renderLocker();
 }
@@ -7007,23 +7427,172 @@ function addMenuNotice(text) {
   ui.lockerLoadout.textContent = text;
 }
 
+function cosmeticCatalog(kind) {
+  if (kind === "trail") return TRAIL_CATALOG;
+  if (kind === "steps") return STEP_CATALOG;
+  return SKIN_CATALOG;
+}
+
+function ownedListFor(kind) {
+  if (kind === "trail") return profile.ownedTrails;
+  if (kind === "steps") return profile.ownedSteps;
+  return profile.ownedSkins;
+}
+
+function ownsCosmetic(kind, id) {
+  return ownedListFor(kind).includes(id);
+}
+
+function equippedCosmetic(kind) {
+  if (kind === "trail") return profile.equippedTrail;
+  if (kind === "steps") return profile.equippedSteps;
+  return profile.skin;
+}
+
+function getSkinById(id) {
+  return SKIN_CATALOG.find((skin) => skin.id === id) || SKIN_CATALOG[0];
+}
+
+function playerTrailColor() {
+  const trail = TRAIL_CATALOG.find((item) => item.id === profile.equippedTrail);
+  return trail ? trail.color : "#f4cf67";
+}
+
+function playerStepColor() {
+  const steps = STEP_CATALOG.find((item) => item.id === profile.equippedSteps);
+  return steps ? steps.color : null;
+}
+
+function equipCosmetic(kind, id) {
+  if (!ownsCosmetic(kind, id)) return;
+  if (kind === "trail") profile.equippedTrail = id;
+  else if (kind === "steps") profile.equippedSteps = id;
+  else profile.skin = id;
+  saveData();
+  renderSkins();
+  renderShop();
+}
+
+function buyCosmetic(kind, id) {
+  const item = cosmeticCatalog(kind).find((entry) => entry.id === id);
+  if (!item || ownsCosmetic(kind, id) || item.unlockLevel) return;
+  const price = showcasePriceFor(kind, id) ?? item.price;
+  if (profile.credits < price) {
+    showToast("Credits insuffisants");
+    return;
+  }
+  profile.credits -= price;
+  ownedListFor(kind).push(id);
+  saveData();
+  showToast(`${item.label} achete !`);
+  renderShop();
+  renderSkins();
+  renderProfile();
+}
+
+function shopInventory() {
+  const entries = [];
+  for (const kind of ["skin", "trail", "steps"]) {
+    for (const item of cosmeticCatalog(kind)) {
+      if (item.price > 0 && !item.unlockLevel) entries.push({ kind, item });
+    }
+  }
+  return entries;
+}
+
+function getDailyShowcase() {
+  const rng = mulberry32(todayKey());
+  return seededPick(shopInventory(), 3, rng).map((entry) => ({
+    ...entry,
+    price: Math.round(entry.item.price * 0.75),
+  }));
+}
+
+function showcasePriceFor(kind, id) {
+  const found = getDailyShowcase().find((entry) => entry.kind === kind && entry.item.id === id);
+  return found ? found.price : null;
+}
+
+function cosmeticKindLabel(kind) {
+  if (kind === "trail") return "Trainee de dash";
+  if (kind === "steps") return "Pas";
+  return "Skin";
+}
+
+function makeCosmeticCard(kind, item, options = {}) {
+  const card = document.createElement("button");
+  card.type = "button";
+  card.className = "skin-card shop-card";
+  const rarity = RARITIES[item.rarity] || RARITIES.common;
+  card.style.setProperty("--rarity", rarity.color);
+  const owned = ownsCosmetic(kind, item.id);
+  const equipped = equippedCosmetic(kind) === item.id;
+  const playerLevel = levelForXp(profile.xp).level;
+  const lockedByLevel = item.unlockLevel && playerLevel < item.unlockLevel;
+  let action;
+  if (equipped) action = "Equipe";
+  else if (owned) action = "Equiper";
+  else if (item.unlockLevel) action = lockedByLevel ? `Niveau ${item.unlockLevel}` : "Palier";
+  else if (options.showPrice) {
+    action = options.oldPrice
+      ? `<s>${options.oldPrice}</s> ${options.price} cr`
+      : `${item.price} cr`;
+  } else action = `${item.price} cr`;
+  card.innerHTML = `
+    <span class="skin-swatch" style="background:${item.color || "rgba(255,255,255,0.14)"}"></span>
+    <span>${item.label}</span>
+    <span class="rarity-tag" style="color:${rarity.color}">${rarity.label}</span>
+    <span class="card-action">${action}</span>
+  `;
+  card.addEventListener("click", () => {
+    if (owned) equipCosmetic(kind, item.id);
+    else if (!item.unlockLevel) buyCosmetic(kind, item.id);
+  });
+  return card;
+}
+
 function renderSkins() {
-  ui.skinsGrid.innerHTML = "";
-  for (const skin of skins) {
-    const card = document.createElement("button");
-    card.type = "button";
-    card.className = "skin-card";
-    card.innerHTML = `
-      <span class="skin-swatch" style="background:${skin.color}"></span>
-      <span>${skin.label}</span>
-      <span>${profile.skin === skin.id ? "Equipe" : "Equiper"}</span>
-    `;
-    card.addEventListener("click", () => {
-      profile.skin = skin.id;
-      saveData();
-      renderSkins();
-    });
-    ui.skinsGrid.appendChild(card);
+  if (!ui.skinsGrid) return;
+  const sections = [
+    { kind: "skin", grid: ui.skinsGrid },
+    { kind: "trail", grid: ui.trailsGrid },
+    { kind: "steps", grid: ui.stepsGrid },
+  ];
+  for (const section of sections) {
+    if (!section.grid) continue;
+    section.grid.innerHTML = "";
+    for (const item of cosmeticCatalog(section.kind)) {
+      if (!ownsCosmetic(section.kind, item.id)) continue;
+      section.grid.appendChild(makeCosmeticCard(section.kind, item));
+    }
+  }
+}
+
+function renderShop() {
+  if (!ui.shopGrid) return;
+  if (ui.shopCredits) ui.shopCredits.textContent = `${profile.credits} credits`;
+  if (ui.showcaseGrid) {
+    ui.showcaseGrid.innerHTML = "";
+    for (const entry of getDailyShowcase()) {
+      ui.showcaseGrid.appendChild(makeCosmeticCard(entry.kind, entry.item, {
+        showPrice: true,
+        price: entry.price,
+        oldPrice: entry.item.price,
+      }));
+    }
+  }
+  ui.shopGrid.innerHTML = "";
+  const rarityOrder = ["common", "uncommon", "rare", "epic", "legendary"];
+  const entries = [];
+  for (const kind of ["skin", "trail", "steps"]) {
+    for (const item of cosmeticCatalog(kind)) {
+      if (item.price === 0 && !item.unlockLevel) continue;
+      entries.push({ kind, item });
+    }
+  }
+  entries.sort((a, b) => rarityOrder.indexOf(a.item.rarity) - rarityOrder.indexOf(b.item.rarity));
+  for (const entry of entries) {
+    ui.shopGrid.appendChild(makeCosmeticCard(entry.kind, entry.item, { showPrice: true }));
   }
 }
 
@@ -7297,7 +7866,10 @@ canvas.addEventListener("wheel", (event) => {
 }, { passive: false });
 
 document.querySelectorAll("[data-menu-tab]").forEach((button) => {
-  button.addEventListener("click", () => showMenuTab(button.dataset.menuTab));
+  button.addEventListener("click", () => {
+    showMenuTab(button.dataset.menuTab);
+    if (button.dataset.menuTab === "shop") renderShop();
+  });
 });
 
 document.querySelectorAll(".keybind").forEach((button) => {
@@ -7360,6 +7932,8 @@ ui.showMinimapToggle.checked = settings.showMinimap;
 minimap.style.display = settings.showMinimap ? "" : "none";
 renderProfile();
 renderSkins();
+renderShop();
+renderDailyChallenges();
 renderKeybindButtons();
 resize();
 requestAnimationFrame(loop);
