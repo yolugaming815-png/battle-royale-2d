@@ -56,6 +56,7 @@ const ui = {
   resultRewards: document.querySelector("#resultRewards"),
   resultXpFill: document.querySelector("#resultXpFill"),
   resultXpLabel: document.querySelector("#resultXpLabel"),
+  resultSeed: document.querySelector("#resultSeed"),
   toasts: document.querySelector("#toasts"),
 };
 
@@ -916,6 +917,23 @@ function updateGameAudio(dt) {
 
 let view = { width: 0, height: 0, dpr: 1 };
 let game = null;
+
+function seedToCode(seed) {
+  return (seed >>> 0).toString(36).toUpperCase();
+}
+
+function parseSeedCode(code) {
+  const value = parseInt(String(code).trim().toLowerCase(), 36);
+  return Number.isFinite(value) && value > 0 ? (value >>> 0) : null;
+}
+
+const requestedMapSeed = (() => {
+  try {
+    return parseSeedCode(new URLSearchParams(window.location.search).get("seed") || "");
+  } catch (error) {
+    return null;
+  }
+})();
 
 const fx = {
   trauma: 0,
@@ -1849,9 +1867,14 @@ function newGame(mode = lastGameMode, teamSize = 1) {
   lastTeamSize = selectedTeamSize;
   profile.games += 1;
   saveData();
+  const mapSeed = requestedMapSeed ?? (Math.floor(Math.random() * 0xffffffff) >>> 0);
+  const restoreRandom = Math.random;
+  Math.random = mulberry32(mapSeed);
   const mapFeatures = makeMapFeatures();
-  const obstacles = makeObstacles();
+  const obstacles = makeObstacles(mapFeatures);
   const chests = makeChests(obstacles);
+  const launchPads = makeLaunchPads(obstacles, mapFeatures);
+  Math.random = restoreRandom;
   const zone = makeZone();
   const totalCount = selectedMode === "extraction" ? EXTRACTION_BOT_COUNT + 1 : BOT_COUNT + 1;
   const teammateCount = selectedTeamSize - 1;
@@ -1930,7 +1953,8 @@ function newGame(mode = lastGameMode, teamSize = 1) {
     smokeClouds: [],
     grass: makeGrass(),
     groundPatches: makeGroundPatches(),
-    launchPads: makeLaunchPads(obstacles, mapFeatures),
+    launchPads,
+    mapSeed,
     airdrops: [],
     airdropTimer: AIRDROP_FIRST_TIME,
     airdropCount: 0,
@@ -1979,6 +2003,7 @@ function newGame(mode = lastGameMode, teamSize = 1) {
   ui.gameOver.classList.add("hidden");
   ui.hud.classList.remove("hidden");
   addFeed(`${TEAM_MODES[selectedTeamSize].label} - ${selectedMode === "extraction" ? "Extraction: trouve du stuff puis exfiltre." : selectedMode === "night" ? "Night Life: reste dans la lumiere." : "La partie commence. La zone apparaitra bientot."}`);
+  addFeed(`Carte ${seedToCode(mapSeed)}`);
   if (selectedMode === "night") addFeed("La zone apparaitra bientot.");
   if (selectedMode === "extraction") addFeed("Reste 6s dans une zone verte pour extraire.");
   drawMinimap();
@@ -2045,14 +2070,16 @@ function safeSpawn(obstacles, blockers = [], options = {}) {
   return bestPoint || { x: WORLD.width / 2 + rand(-240, 240), y: WORLD.height / 2 + rand(-180, 180) };
 }
 
-function makeObstacles() {
+function makeObstacles(features) {
   const obstacles = [];
 
-  addForestCluster(obstacles, 1540, 7440, 980, 150);
-  addForestCluster(obstacles, 8420, 1600, 850, 105);
-  addForestCluster(obstacles, 6120, 8280, 720, 80);
-  addRockCluster(obstacles, 8220, 7420, 700, 85);
-  addRockCluster(obstacles, 1960, 2140, 560, 55);
+  const forestCenter = zoneCenter(features, "forest");
+  const quarryCenter = zoneCenter(features, "quarry");
+  addForestCluster(obstacles, forestCenter.x, forestCenter.y, 980, 150);
+  addForestCluster(obstacles, rand(600, WORLD.width - 600), rand(600, WORLD.height - 600), 850, 105);
+  addForestCluster(obstacles, rand(600, WORLD.width - 600), rand(600, WORLD.height - 600), 720, 80);
+  addRockCluster(obstacles, quarryCenter.x, quarryCenter.y, 700, 85);
+  addRockCluster(obstacles, rand(600, WORLD.width - 600), rand(600, WORLD.height - 600), 560, 55);
 
   for (let i = 0; i < 170; i += 1) {
     obstacles.push({
@@ -2086,19 +2113,46 @@ function makeObstacles() {
     });
   }
 
+  const townOrigin = zoneBuilderOrigin(features, "town", 180, 200);
+  const industrialOrigin = zoneBuilderOrigin(features, "industrial", 200, 200);
+  const farmOrigin = zoneBuilderOrigin(features, "farm", 280, 320);
+  const forestOrigin = zoneBuilderOrigin(features, "forest", 640, 540);
+  const harborOrigin = zoneBuilderOrigin(features, "harbor", 280, 320);
+  const villageOrigin = zoneBuilderOrigin(features, "village", 280, 320);
+  const militaryOrigin = zoneBuilderOrigin(features, "military", 220, 220);
+  const fireStationOrigin = zoneBuilderOrigin(features, "fire_station", 200, 220);
+
+  const extraVariants = [
+    { w: 300, h: 210, variant: "large_house" },
+    { w: 310, h: 190, variant: "large_house" },
+    { w: 270, h: 180, variant: "shop" },
+    { w: 300, h: 200, variant: "farm" },
+  ];
+  const extras = [];
+  for (const extra of extraVariants) {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const rect = {
+        x: rand(400, WORLD.width - extra.w - 400),
+        y: rand(400, WORLD.height - extra.h - 400),
+        w: extra.w,
+        h: extra.h,
+      };
+      if (rectOverlapsRivers(rect, features.rivers, 90)) continue;
+      extras.push({ ...rect, variant: extra.variant });
+      break;
+    }
+  }
+
   const buildings = [
-    ...makeTownBuildings(820, 760),
-    ...makeIndustrialBuildings(6040, 760),
-    ...makeFarmBuildings(1040, 3180),
-    ...makeForestCabins(1160, 6820),
-    ...makeHarborBuildings(7880, 5320),
-    ...makeVillageBuildings(3820, 7920),
-    ...makeMilitaryBaseBuildings(7960, 980),
-    ...makeFireStationBuildings(5600, 6580),
-    { x: 4620, y: 3480, w: 300, h: 210, variant: "large_house" },
-    { x: 5200, y: 4520, w: 310, h: 190, variant: "large_house" },
-    { x: 8460, y: 3020, w: 270, h: 180, variant: "shop" },
-    { x: 9020, y: 8060, w: 300, h: 200, variant: "farm" },
+    ...makeTownBuildings(townOrigin.x, townOrigin.y),
+    ...makeIndustrialBuildings(industrialOrigin.x, industrialOrigin.y),
+    ...makeFarmBuildings(farmOrigin.x, farmOrigin.y),
+    ...makeForestCabins(forestOrigin.x, forestOrigin.y),
+    ...makeHarborBuildings(harborOrigin.x, harborOrigin.y),
+    ...makeVillageBuildings(villageOrigin.x, villageOrigin.y),
+    ...makeMilitaryBaseBuildings(militaryOrigin.x, militaryOrigin.y),
+    ...makeFireStationBuildings(fireStationOrigin.x, fireStationOrigin.y),
+    ...extras,
   ];
 
   for (const building of buildings) {
@@ -2106,9 +2160,12 @@ function makeObstacles() {
   }
   clearBuildingFootprints(obstacles);
 
-  addCrateCluster(obstacles, 6400, 1140, 850, 75, 0.62);
-  addCrateCluster(obstacles, 8120, 5480, 650, 45, 0.7);
-  addCrateCluster(obstacles, 1220, 3520, 620, 35, 0.18);
+  const industrialCenter = zoneCenter(features, "industrial");
+  const harborCenter = zoneCenter(features, "harbor");
+  const farmCenter = zoneCenter(features, "farm");
+  addCrateCluster(obstacles, industrialCenter.x + 360, industrialCenter.y + 380, 850, 75, 0.62);
+  addCrateCluster(obstacles, harborCenter.x + 460, harborCenter.y + 420, 650, 45, 0.7);
+  addCrateCluster(obstacles, farmCenter.x - 400, farmCenter.y + 340, 620, 35, 0.18);
 
   for (let i = 0; i < 85; i += 1) {
     const material = Math.random() < 0.36 ? "metal" : "wood";
@@ -2476,70 +2533,150 @@ function addCrateCluster(obstacles, centerX, centerY, radius, count, metalChance
   }
 }
 
+const ZONE_DEFS = [
+  { id: "town", label: "Ville", w: 1720, h: 1280, color: "rgba(255, 255, 255, 0.08)" },
+  { id: "industrial", label: "Hangars", w: 1760, h: 1260, color: "rgba(255, 255, 255, 0.07)" },
+  { id: "farm", label: "Ferme", w: 1760, h: 1260, color: "rgba(213, 185, 69, 0.12)" },
+  { id: "forest", label: "Foret", w: 2480, h: 2320, color: "rgba(42, 121, 43, 0.14)" },
+  { id: "quarry", label: "Carriere", w: 1460, h: 1260, color: "rgba(255, 255, 255, 0.09)" },
+  { id: "harbor", label: "Docks", w: 1320, h: 1100, color: "rgba(22, 116, 190, 0.08)" },
+  { id: "village", label: "Village", w: 1340, h: 1220, color: "rgba(195, 167, 94, 0.1)" },
+  { id: "military", label: "Base militaire", w: 1440, h: 1140, color: "rgba(41, 83, 34, 0.12)" },
+  { id: "fire_station", label: "Caserne", w: 1160, h: 980, color: "rgba(209, 76, 60, 0.08)" },
+];
+
+function rectOverlapsRivers(rect, rivers, pad = 60) {
+  return rivers.some((river) => rectsOverlap(
+    { x: rect.x - pad, y: rect.y - pad, w: rect.w + pad * 2, h: rect.h + pad * 2 },
+    river,
+  ));
+}
+
 function makeMapFeatures() {
+  const horizontal1 = { y: rand(1450, 2150), h: rand(140, 180) };
+  const horizontal2 = { y: rand(5650, 6450), h: rand(150, 190) };
+  const vertical1 = { x: rand(3050, 3850), w: rand(140, 180) };
+  const vertical2 = { x: rand(7050, 7800), w: rand(150, 190) };
+  const rivers = [
+    { x: 0, y: horizontal1.y, w: WORLD.width, h: horizontal1.h },
+    { x: vertical1.x, y: 0, w: vertical1.w, h: WORLD.height },
+    { x: 0, y: horizontal2.y, w: WORLD.width, h: horizontal2.h },
+    { x: vertical2.x, y: 0, w: vertical2.w, h: WORLD.height },
+  ];
+
+  const columnBounds = [
+    [0, vertical1.x],
+    [vertical1.x + vertical1.w, vertical2.x],
+    [vertical2.x + vertical2.w, WORLD.width],
+  ];
+  const rowBounds = [
+    [0, horizontal1.y],
+    [horizontal1.y + horizontal1.h, horizontal2.y],
+    [horizontal2.y + horizontal2.h, WORLD.height],
+  ];
+  const cells = [];
+  for (const [rowStart, rowEnd] of rowBounds) {
+    for (const [colStart, colEnd] of columnBounds) {
+      cells.push({ x: colStart, y: rowStart, w: colEnd - colStart, h: rowEnd - rowStart });
+    }
+  }
+
+  const margin = 140;
+  const freeCells = [...cells];
+  const zones = [];
+  const orderedDefs = [...ZONE_DEFS].sort((a, b) => b.w * b.h - a.w * a.h);
+  for (const def of orderedDefs) {
+    const shuffled = [...freeCells].sort(() => Math.random() - 0.5);
+    const cell = shuffled.find((candidate) => candidate.w >= def.w + margin * 2 && candidate.h >= def.h + margin * 2)
+      || shuffled.sort((a, b) => b.w * b.h - a.w * a.h)[0];
+    freeCells.splice(freeCells.indexOf(cell), 1);
+    const w = Math.min(def.w, cell.w - margin * 2);
+    const h = Math.min(def.h, cell.h - margin * 2);
+    zones.push({
+      id: def.id,
+      label: def.label,
+      color: def.color,
+      w,
+      h,
+      x: cell.x + margin + rand(0, Math.max(0, cell.w - w - margin * 2)),
+      y: cell.y + margin + rand(0, Math.max(0, cell.h - h - margin * 2)),
+      scaleX: w / def.w,
+      scaleY: h / def.h,
+    });
+  }
+
+  const bridges = [];
+  for (const river of [rivers[0], rivers[2]]) {
+    for (const [colStart, colEnd] of columnBounds) {
+      const count = colEnd - colStart > 3400 ? 2 : 1;
+      for (let i = 0; i < count; i += 1) {
+        const segment = (colEnd - colStart - 500) / count;
+        const x = colStart + 250 + segment * i + rand(0, Math.max(0, segment - 320));
+        bridges.push({ x, y: river.y - 32, w: rand(240, 320), h: river.h + 64 });
+      }
+    }
+  }
+  for (const river of [rivers[1], rivers[3]]) {
+    for (const [rowStart, rowEnd] of rowBounds) {
+      const count = rowEnd - rowStart > 3400 ? 2 : 1;
+      for (let i = 0; i < count; i += 1) {
+        const segment = (rowEnd - rowStart - 500) / count;
+        const y = rowStart + 250 + segment * i + rand(0, Math.max(0, segment - 320));
+        bridges.push({ x: river.x - 32, y, w: river.w + 64, h: rand(240, 320) });
+      }
+    }
+  }
+
+  const stealthZones = [];
+  const farmZone = zones.find((zone) => zone.id === "farm");
+  const forestZone = zones.find((zone) => zone.id === "forest");
+  const fieldAnchors = [farmZone, farmZone, farmZone, forestZone, forestZone];
+  for (const anchor of fieldAnchors) {
+    const w = rand(480, 740);
+    const h = rand(260, 390);
+    stealthZones.push({
+      type: "field",
+      x: clamp(anchor.x + rand(0, Math.max(60, anchor.w - w)), 60, WORLD.width - w - 60),
+      y: clamp(anchor.y + rand(0, Math.max(60, anchor.h - h)), 60, WORLD.height - h - 60),
+      w,
+      h,
+    });
+  }
+  for (let i = 0; i < 40 && stealthZones.length < 12; i += 1) {
+    const w = rand(480, 760);
+    const h = rand(260, 390);
+    const rect = { x: rand(300, WORLD.width - w - 300), y: rand(300, WORLD.height - h - 300), w, h };
+    if (rectOverlapsRivers(rect, rivers)) continue;
+    stealthZones.push({ type: "field", ...rect });
+  }
+  let bushes = 0;
+  for (let i = 0; i < 60 && bushes < 10; i += 1) {
+    const r = rand(120, 165);
+    const x = rand(300, WORLD.width - 300);
+    const y = rand(300, WORLD.height - 300);
+    if (rectOverlapsRivers({ x: x - r, y: y - r, w: r * 2, h: r * 2 }, rivers, 20)) continue;
+    stealthZones.push({ type: "bush", x, y, r });
+    bushes += 1;
+  }
+
+  return { zones, rivers, bridges, stealthZones };
+}
+
+function zoneById(features, id) {
+  return features.zones.find((zone) => zone.id === id);
+}
+
+function zoneBuilderOrigin(features, id, offsetX, offsetY) {
+  const zone = zoneById(features, id);
   return {
-    zones: [
-      { id: "town", label: "Ville", x: 640, y: 560, w: 1720, h: 1280, color: "rgba(255, 255, 255, 0.08)" },
-      { id: "industrial", label: "Hangars", x: 5840, y: 560, w: 1760, h: 1260, color: "rgba(255, 255, 255, 0.07)" },
-      { id: "farm", label: "Ferme", x: 760, y: 2860, w: 1760, h: 1260, color: "rgba(213, 185, 69, 0.12)" },
-      { id: "forest", label: "Foret", x: 520, y: 6280, w: 2480, h: 2320, color: "rgba(42, 121, 43, 0.14)" },
-      { id: "quarry", label: "Carriere", x: 7520, y: 6680, w: 1460, h: 1260, color: "rgba(255, 255, 255, 0.09)" },
-      { id: "harbor", label: "Docks", x: 7600, y: 5000, w: 1320, h: 1100, color: "rgba(22, 116, 190, 0.08)" },
-      { id: "village", label: "Village", x: 3540, y: 7600, w: 1340, h: 1220, color: "rgba(195, 167, 94, 0.1)" },
-      { id: "military", label: "Base militaire", x: 7740, y: 760, w: 1440, h: 1140, color: "rgba(41, 83, 34, 0.12)" },
-      { id: "fire_station", label: "Caserne", x: 5400, y: 6360, w: 1160, h: 980, color: "rgba(209, 76, 60, 0.08)" },
-    ],
-    rivers: [
-      { x: 0, y: 1760, w: WORLD.width, h: 150 },
-      { x: 3520, y: 0, w: 150, h: WORLD.height },
-      { x: 0, y: 6120, w: WORLD.width, h: 170 },
-      { x: 7460, y: 0, w: 160, h: WORLD.height },
-    ],
-    bridges: [
-      { x: 700, y: 1728, w: 250, h: 214 },
-      { x: 2080, y: 1728, w: 270, h: 214 },
-      { x: 3920, y: 1728, w: 280, h: 214 },
-      { x: 5660, y: 1728, w: 290, h: 214 },
-      { x: 8120, y: 1728, w: 310, h: 214 },
-      { x: 3488, y: 520, w: 214, h: 250 },
-      { x: 3488, y: 2260, w: 214, h: 270 },
-      { x: 3488, y: 3300, w: 214, h: 250 },
-      { x: 3488, y: 4380, w: 214, h: 280 },
-      { x: 3488, y: 6640, w: 214, h: 300 },
-      { x: 3488, y: 8400, w: 214, h: 300 },
-      { x: 900, y: 6080, w: 300, h: 250 },
-      { x: 2820, y: 6080, w: 310, h: 250 },
-      { x: 5120, y: 6080, w: 310, h: 250 },
-      { x: 8320, y: 6080, w: 320, h: 250 },
-      { x: 7420, y: 640, w: 240, h: 300 },
-      { x: 7420, y: 3120, w: 240, h: 320 },
-      { x: 7420, y: 7280, w: 240, h: 320 },
-    ],
-    stealthZones: [
-      { type: "field", x: 940, y: 3080, w: 520, h: 300 },
-      { type: "field", x: 1530, y: 2970, w: 680, h: 330 },
-      { type: "field", x: 870, y: 3660, w: 730, h: 320 },
-      { type: "field", x: 1710, y: 3720, w: 620, h: 300 },
-      { type: "field", x: 3950, y: 2660, w: 620, h: 310 },
-      { type: "field", x: 2460, y: 520, w: 480, h: 260 },
-      { type: "field", x: 5860, y: 3760, w: 620, h: 330 },
-      { type: "field", x: 1240, y: 4380, w: 540, h: 300 },
-      { type: "field", x: 7800, y: 2520, w: 720, h: 360 },
-      { type: "field", x: 840, y: 7420, w: 680, h: 340 },
-      { type: "field", x: 4320, y: 7860, w: 720, h: 360 },
-      { type: "field", x: 7440, y: 8500, w: 760, h: 390 },
-      { type: "bush", x: 760, y: 1720, r: 120 },
-      { type: "bush", x: 3180, y: 960, r: 150 },
-      { type: "bush", x: 4800, y: 3440, r: 140 },
-      { type: "bush", x: 1760, y: 2660, r: 130 },
-      { type: "bush", x: 6420, y: 1160, r: 150 },
-      { type: "bush", x: 6940, y: 4620, r: 135 },
-      { type: "bush", x: 8720, y: 3720, r: 150 },
-      { type: "bush", x: 2140, y: 7200, r: 145 },
-      { type: "bush", x: 5900, y: 8120, r: 165 },
-      { type: "bush", x: 9120, y: 8860, r: 150 },
-    ],
+    x: zone.x + offsetX * zone.scaleX,
+    y: zone.y + offsetY * zone.scaleY,
   };
+}
+
+function zoneCenter(features, id) {
+  const zone = zoneById(features, id);
+  return { x: zone.x + zone.w / 2, y: zone.y + zone.h / 2 };
 }
 
 function makeGroundPatches() {
@@ -5999,6 +6136,10 @@ function endGame(won, details = {}) {
   const levelLines = applyLevelUps(prevXp, profile.xp);
   renderMatchRewards(rewards, levelLines);
   renderDailyChallenges();
+  if (ui.resultSeed) {
+    const code = seedToCode(game.mapSeed);
+    ui.resultSeed.textContent = `Carte ${code} - ajoute ?seed=${code} a l'URL pour rejouer cette carte`;
+  }
   saveData();
   renderProfile();
   resetTouchInput();
@@ -6940,18 +7081,19 @@ function applyStealthZoneExclusions() {
   ctx.clip("evenodd");
 }
 
+const ROAD_ZONE_IDS = ["town", "industrial", "farm", "harbor", "village"];
+
 function mapRoadRects() {
-  return [
-    { x: 520, y: 1168, w: 2060, h: 104 },
-    { x: 1468, y: 460, w: 104, h: 1580 },
-    { x: 5800, y: 1138, w: 1860, h: 104 },
-    { x: 6698, y: 480, w: 104, h: 1520 },
-    { x: 920, y: 3478, w: 1700, h: 104 },
-    { x: 1598, y: 2800, w: 104, h: 1520 },
-    { x: 7580, y: 5478, w: 1460, h: 104 },
-    { x: 8138, y: 4820, w: 104, h: 1500 },
-    { x: 3420, y: 8178, w: 1680, h: 104 },
-  ];
+  if (!game || !game.mapFeatures) return [];
+  const rects = [];
+  for (const zone of game.mapFeatures.zones) {
+    if (!ROAD_ZONE_IDS.includes(zone.id)) continue;
+    const centerX = zone.x + zone.w / 2;
+    const centerY = zone.y + zone.h / 2;
+    rects.push({ x: zone.x - 60, y: centerY - 52, w: zone.w + 120, h: 104 });
+    rects.push({ x: centerX - 52, y: zone.y - 60, w: 104, h: zone.h + 120 });
+  }
+  return rects;
 }
 
 function drawGrass() {

@@ -470,6 +470,13 @@ h2 {
   font-weight: 850;
 }
 
+.seed-label {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
 .toasts {
   position: fixed;
   top: 16px;

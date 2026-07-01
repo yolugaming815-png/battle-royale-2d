@@ -46,3 +46,6 @@ Ouvre `index.html` dans ton navigateur.
 - Evenements de mi-partie : rush de coffres, zone rapide, double loot, meteores, brouillard
 - Bots a personnalites (fonceur, tireur, campeur, looteur, protecteur)
 - Nemesis persistante : le bot qui t'elimine revient te chasser, prime a la cle
+- Arc a tir charge : maintiens le tir pour bander, relache pour decocher
+- Carte procedurale seedee : rivieres, quartiers et ponts changent a chaque partie
+- Seed partageable : ajoute ?seed=CODE a l'URL pour rejouer une carte
