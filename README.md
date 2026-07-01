@@ -36,3 +36,13 @@ Ouvre `index.html` dans ton navigateur.
 - Zone de danger qui se referme
 - Mini-carte, compteur de survivants, score et fil d'eliminations
 - Menu avec skins, boutique, profil, amis, rename et parametres
+- Audio 100% synthetise (Web Audio) : tirs par arme, impacts, zone, coeur en PV bas
+- Game feel : screen shake, hit-stop, degats flottants, tracers, vignette PV bas
+- Boutique de skins avec raretes, vitrine du jour, trainees de dash et pas
+- Credits et XP en fin de partie, niveaux de compte avec paliers de skins
+- 3 defis quotidiens seedes par la date, stats de profil enrichies
+- Recul progressif (bloom), grenades frag, plaques de saut
+- Airdrops avec loot legendaire convoites par les bots
+- Evenements de mi-partie : rush de coffres, zone rapide, double loot, meteores, brouillard
+- Bots a personnalites (fonceur, tireur, campeur, looteur, protecteur)
+- Nemesis persistante : le bot qui t'elimine revient te chasser, prime a la cle

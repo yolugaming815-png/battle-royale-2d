@@ -226,6 +226,28 @@ const LAUNCH_SPEED = 920;
 const LAUNCH_DURATION = 0.85;
 const LAUNCH_REARM = 1;
 
+const AIRDROP_FIRST_TIME = 75;
+const AIRDROP_INTERVAL_MIN = 90;
+const AIRDROP_INTERVAL_MAX = 135;
+const AIRDROP_FALL_TIME = 8;
+const AIRDROP_MAX = 3;
+const AIRDROP_CHEST_RADIUS = 30;
+
+const MATCH_EVENTS = {
+  chest_rush: { label: "Rush de coffres", duration: 0, color: "#f4cf67" },
+  fast_zone: { label: "Zone rapide", duration: 60, color: "#66b2ff" },
+  double_loot: { label: "Double loot", duration: 45, color: "#50c878" },
+  meteor_shower: { label: "Pluie de meteores", duration: 14, color: "#ff8a5c" },
+  fog: { label: "Brouillard", duration: 40, color: "#cfd6d3" },
+};
+const EVENT_TRIGGER_MIN = 110;
+const EVENT_TRIGGER_MAX = 170;
+const METEOR_TELEGRAPH = 1.1;
+const METEOR_RADIUS = 120;
+const METEOR_DAMAGE = 55;
+const FOG_VIEW_RADIUS = 520;
+const FOG_BOT_RANGE = 460;
+
 const WEAPONS = {
   pickaxe: {
     label: "Pioche",
@@ -319,6 +341,16 @@ const WEAPONS = {
     bloomRecovery: 0.25,
   },
 };
+
+const BOT_ARCHETYPES = {
+  rusher: { label: "Fonceur", aggro: 1.35, engage: 0.7, hunt: 1.25, dash: 1.6, build: 0.5, lootPhase: 0.6, weaponBias: { shotgun: 45, smg: 25, sniper: -40 } },
+  sniper: { label: "Tireur", aggro: 0.9, engage: 1.7, hunt: 1.15, dash: 0.7, build: 0.9, lootPhase: 1, weaponBias: { sniper: 70, assault_rifle: 20, shotgun: -35 } },
+  camper: { label: "Campeur", aggro: 0.55, engage: 1.2, hunt: 0.6, dash: 0.5, build: 1.6, lootPhase: 1.3, weaponBias: { assault_rifle: 20 }, stealth: true },
+  looter: { label: "Looteur", aggro: 0.7, engage: 1, hunt: 0.7, dash: 1.1, build: 0.7, lootPhase: 1.8, weaponBias: {}, lootRange: 1.5 },
+  protector: { label: "Protecteur", aggro: 0.85, engage: 1, hunt: 0.9, dash: 0.9, build: 1.4, lootPhase: 1, weaponBias: {}, reviveBias: true },
+};
+const NEUTRAL_PERSONALITY = { label: "", aggro: 1, engage: 1, hunt: 1, dash: 1, build: 1, lootPhase: 1, weaponBias: {} };
+const NEMESIS_ARCHETYPE_WEAPONS = { rusher: "shotgun", sniper: "sniper", camper: "assault_rifle", looter: "smg", protector: "assault_rifle" };
 
 const BOT_NAMES = [
   "Nova",
@@ -1354,6 +1386,9 @@ function makeFighter(name, x, y, isPlayer = false, options = {}) {
   const weaponKey = "pickaxe";
   const weapon = WEAPONS[weaponKey];
   const hotbar = [makeWeaponItem("pickaxe"), null, null, null];
+  const archetype = isPlayer
+    ? null
+    : options.archetype || (options.isTeammate ? "protector" : pick(Object.keys(BOT_ARCHETYPES)));
   return {
     id: makeId(name),
     name,
@@ -1446,6 +1481,11 @@ function makeFighter(name, x, y, isPlayer = false, options = {}) {
     launchRearm: 0,
     launchX: 0,
     launchY: 0,
+    archetype,
+    personality: archetype ? BOT_ARCHETYPES[archetype] : NEUTRAL_PERSONALITY,
+    isNemesis: false,
+    nemesisHuntTimer: 0,
+    nemesisAnnounced: false,
   };
 }
 
@@ -1534,6 +1574,223 @@ function drawLaunchPads() {
   }
 }
 
+function safeZonePoint(radiusScale = 0.75) {
+  const zone = game.zone;
+  const useTarget = zone.mode === "shrinking";
+  const centerX = useTarget ? zone.targetX : zone.x;
+  const centerY = useTarget ? zone.targetY : zone.y;
+  const maxRadius = (useTarget ? zone.targetRadius : zone.radius) * radiusScale;
+  const angle = rand(0, TAU);
+  const d = rand(0, maxRadius);
+  return {
+    x: clamp(centerX + Math.cos(angle) * d, 60, WORLD.width - 60),
+    y: clamp(centerY + Math.sin(angle) * d, 60, WORLD.height - 60),
+  };
+}
+
+function spawnAirdrop() {
+  const raw = safeZonePoint(0.72);
+  const point = findSafePointAround(raw.x, raw.y, 42, game.obstacles, game.mapFeatures, 60) || raw;
+  game.airdrops.push({
+    id: makeId("airdrop"),
+    x: point.x,
+    y: point.y,
+    timer: AIRDROP_FALL_TIME,
+    pulse: 0,
+  });
+  game.airdropCount += 1;
+  announce("Largage en approche !", "#ff8a5c");
+  sfxZoneWarn();
+}
+
+function updateAirdrops(dt) {
+  if (game.mode === "extraction") return;
+  if (game.airdropCount < AIRDROP_MAX) {
+    game.airdropTimer -= dt;
+    if (game.airdropTimer <= 0) {
+      spawnAirdrop();
+      game.airdropTimer = rand(AIRDROP_INTERVAL_MIN, AIRDROP_INTERVAL_MAX);
+    }
+  }
+  for (const airdrop of game.airdrops) {
+    airdrop.timer -= dt;
+    airdrop.pulse += dt * 6;
+    if (airdrop.timer <= 0) {
+      airdrop.done = true;
+      game.chests.push({
+        id: airdrop.id,
+        x: airdrop.x,
+        y: airdrop.y,
+        radius: AIRDROP_CHEST_RADIUS,
+        opened: false,
+        pulse: 0,
+        airdrop: true,
+      });
+      announce("La caisse est au sol !", "#ff8a5c");
+      spawnHit(airdrop.x, airdrop.y, "#ff8a5c", 20);
+    }
+  }
+  game.airdrops = game.airdrops.filter((airdrop) => !airdrop.done);
+
+  for (const chest of game.chests) {
+    if (!chest.airdrop || chest.opened) continue;
+    if (Math.floor(chest.pulse * 1.4) !== Math.floor((chest.pulse - dt * 2.2) * 1.4)) {
+      spawnParticle(chest.x + rand(-10, 10), chest.y + rand(-10, 10), "rgba(255, 140, 60, 0.8)", rand(0.6, 1.1), rand(14, 34));
+    }
+  }
+}
+
+function drawAirdrops() {
+  for (const airdrop of game.airdrops) {
+    const progress = 1 - clamp(airdrop.timer / AIRDROP_FALL_TIME, 0, 1);
+    ctx.save();
+    ctx.translate(airdrop.x, airdrop.y);
+    ctx.fillStyle = `rgba(0, 0, 0, ${0.1 + progress * 0.2})`;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 14 + progress * 22, 7 + progress * 11, 0, 0, TAU);
+    ctx.fill();
+    const height = airdrop.timer * 90;
+    ctx.translate(0, -height);
+    ctx.strokeStyle = IO_THEME.ink;
+    ctx.lineWidth = 3;
+    ctx.fillStyle = "#ff8a5c";
+    ctx.beginPath();
+    ctx.moveTo(0, -66);
+    ctx.lineTo(34, -34);
+    ctx.lineTo(-34, -34);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-30, -36);
+    ctx.lineTo(-13, -12);
+    ctx.moveTo(30, -36);
+    ctx.lineTo(13, -12);
+    ctx.stroke();
+    roundRect(-15, -14, 30, 26, 5, "#b8743f");
+    ctx.strokeRect(-15, -14, 30, 26);
+    ctx.fillStyle = "#ffd45e";
+    ctx.fillRect(-15, -5, 30, 7);
+    ctx.restore();
+  }
+}
+
+function eventActive(id) {
+  return Boolean(game && game.matchEvent && game.matchEvent.id === id && game.matchEvent.timer > 0);
+}
+
+function startMatchEvent(id) {
+  const def = MATCH_EVENTS[id];
+  if (!def) return;
+  game.matchEvent = { id, timer: def.duration, label: def.label };
+  announce(`Evenement : ${def.label} !`, def.color);
+  sfxZoneWarn();
+
+  if (id === "chest_rush") {
+    for (const chest of game.chests) {
+      if (!chest.airdrop) chest.opened = false;
+    }
+    game.matchEvent = null;
+    return;
+  }
+  if (id === "meteor_shower") {
+    const center = safeZonePoint(0.6);
+    game.matchEvent.centerX = center.x;
+    game.matchEvent.centerY = center.y;
+    game.matchEvent.radius = 900;
+    game.matchEvent.spawnTimer = 0;
+  }
+}
+
+function updateMatchEvent(dt) {
+  if (game.mode === "extraction") return;
+  if (!game.eventFired) {
+    game.eventTimer -= dt;
+    if (game.eventTimer <= 0) {
+      game.eventFired = true;
+      startMatchEvent(pick(Object.keys(MATCH_EVENTS)));
+    }
+  }
+
+  if (game.matchEvent) {
+    game.matchEvent.timer -= dt;
+    if (game.matchEvent.id === "meteor_shower") {
+      game.matchEvent.spawnTimer -= dt;
+      if (game.matchEvent.spawnTimer <= 0 && game.matchEvent.timer > 0) {
+        game.matchEvent.spawnTimer = 0.35;
+        const angle = rand(0, TAU);
+        const d = rand(0, game.matchEvent.radius);
+        game.meteors.push({
+          x: clamp(game.matchEvent.centerX + Math.cos(angle) * d, 40, WORLD.width - 40),
+          y: clamp(game.matchEvent.centerY + Math.sin(angle) * d, 40, WORLD.height - 40),
+          telegraph: METEOR_TELEGRAPH,
+        });
+      }
+    }
+    if (game.matchEvent.timer <= 0) {
+      addFeed(`Fin de l'evenement : ${game.matchEvent.label}`);
+      game.matchEvent = null;
+    }
+  }
+
+  for (const meteor of game.meteors) {
+    meteor.telegraph -= dt;
+    if (meteor.telegraph <= 0) {
+      meteor.done = true;
+      explodeAt(meteor.x, meteor.y, METEOR_RADIUS, METEOR_DAMAGE, null, { obstacleDamage: 90 });
+    }
+  }
+  game.meteors = game.meteors.filter((meteor) => !meteor.done);
+}
+
+function drawMeteors() {
+  for (const meteor of game.meteors) {
+    const progress = 1 - clamp(meteor.telegraph / METEOR_TELEGRAPH, 0, 1);
+    ctx.save();
+    ctx.translate(meteor.x, meteor.y);
+    ctx.globalAlpha = 0.3 + progress * 0.4;
+    ctx.strokeStyle = "#ff5a3c";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, 0, METEOR_RADIUS, 0, TAU);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(255, 90, 60, 0.16)";
+    ctx.beginPath();
+    ctx.arc(0, 0, METEOR_RADIUS * progress, 0, TAU);
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
+let fogGradient = null;
+let fogKey = "";
+
+function drawFog() {
+  if (!eventActive("fog")) return;
+  const player = game.player;
+  const screenX = player.x - game.camera.x;
+  const screenY = player.y - game.camera.y;
+  const fade = clamp(game.matchEvent.timer / 2, 0, 1) * clamp((MATCH_EVENTS.fog.duration - game.matchEvent.timer) * 2, 0, 1);
+  ctx.save();
+  ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
+  const key = `${view.width}x${view.height}`;
+  if (fogKey !== key) {
+    fogKey = key;
+    fogGradient = null;
+  }
+  if (!fogGradient) {
+    fogGradient = ctx.createRadialGradient(0, 0, FOG_VIEW_RADIUS * 0.55, 0, 0, FOG_VIEW_RADIUS);
+    fogGradient.addColorStop(0, "rgba(148, 158, 155, 0)");
+    fogGradient.addColorStop(1, "rgba(148, 158, 155, 0.9)");
+  }
+  ctx.globalAlpha = fade;
+  ctx.translate(screenX, screenY);
+  ctx.fillStyle = fogGradient;
+  ctx.fillRect(-screenX, -screenY, view.width, view.height);
+  ctx.restore();
+}
+
 function makeZone() {
   return {
     x: WORLD.width / 2,
@@ -1576,7 +1833,8 @@ function newGame(mode = lastGameMode, teamSize = 1) {
   const playerPoint = safeSpawn(obstacles, [], { minDistance: 980, features: mapFeatures, spawnRadius: initialSpawnRadius, attempts: spawnAttempts });
   const teammates = [];
   const bots = [];
-  const names = [...BOT_NAMES].sort(() => Math.random() - 0.5);
+  const excludedName = profile.nemesis ? profile.nemesis.name : null;
+  const names = BOT_NAMES.filter((name) => name !== excludedName).sort(() => Math.random() - 0.5);
 
   for (let i = 0; i < teammateCount; i += 1) {
     const angle = (i / Math.max(1, teammateCount)) * TAU + rand(-0.25, 0.25);
@@ -1644,6 +1902,13 @@ function newGame(mode = lastGameMode, teamSize = 1) {
     grass: makeGrass(),
     groundPatches: makeGroundPatches(),
     launchPads: makeLaunchPads(obstacles, mapFeatures),
+    airdrops: [],
+    airdropTimer: AIRDROP_FIRST_TIME,
+    airdropCount: 0,
+    matchEvent: null,
+    eventTimer: rand(EVENT_TRIGGER_MIN, EVENT_TRIGGER_MAX),
+    eventFired: false,
+    meteors: [],
     zone,
     teamSize: selectedTeamSize,
     totalPlayers: totalCount,
@@ -1676,6 +1941,10 @@ function newGame(mode = lastGameMode, teamSize = 1) {
   if (selectedMode === "extraction") applyExtractionLoadout(game.player);
   syncEquippedFromHotbar(game.player);
   resetFx();
+  if (profile.nemesis && selectedMode !== "extraction") {
+    const enemyBots = game.bots.filter((bot) => !bot.isTeammate);
+    if (enemyBots.length) applyNemesisToBot(pick(enemyBots));
+  }
 
   ui.menu.classList.add("hidden");
   ui.gameOver.classList.add("hidden");
@@ -2437,29 +2706,50 @@ function openChest(chest, opener) {
     notifyChallenge("chest");
   }
 
-  const primaryWeapon = randomWeaponType();
-  const drops = [
-    { type: primaryWeapon, minimumRarity: Math.random() < 0.22 ? "rare" : "common" },
-    { type: ammoPickupForWeapon(primaryWeapon) },
-    { type: randomAmmoPickup() },
-    { type: randomAmmoPickup() },
-    { type: randomAmmoPickup() },
-    { type: randomMaterialType(), amount: pick([10, 20, 20, 30]) },
-    { type: randomMaterialType(), amount: pick([10, 10, 20]) },
-  ];
-
-  if (Math.random() < 0.65) drops.push({ type: pick(["shield", "medkit", "smoke_grenade", "frag_grenade"]) });
-  if (Math.random() < 0.08) drops.push({ type: "smoke_grenade" });
-  if (Math.random() < 0.1) drops.push({ type: "frag_grenade" });
-  if (game && game.mode === "extraction") {
-    if (Math.random() < 0.72) drops.push({ type: randomValuableType() });
-    if (Math.random() < 0.24) drops.push({ type: randomBackpackType() });
-    if (Math.random() < 0.28) drops.push({ type: randomArmorType() });
-  }
-  if (Math.random() < 0.28) {
+  let drops;
+  if (chest.airdrop) {
+    const primaryWeapon = randomWeaponType();
     const bonusWeapon = randomWeaponType();
-    drops.push({ type: bonusWeapon, minimumRarity: "uncommon" });
-    drops.push({ type: ammoPickupForWeapon(bonusWeapon) });
+    drops = [
+      { type: primaryWeapon, minimumRarity: "legendary" },
+      { type: ammoPickupForWeapon(primaryWeapon) },
+      { type: ammoPickupForWeapon(primaryWeapon) },
+      { type: bonusWeapon, minimumRarity: "epic" },
+      { type: ammoPickupForWeapon(bonusWeapon) },
+      { type: "shield" },
+      { type: "medkit" },
+      { type: "frag_grenade" },
+      { type: "frag_grenade" },
+      { type: randomMaterialType(), amount: 30 },
+    ];
+  } else {
+    const primaryWeapon = randomWeaponType();
+    drops = [
+      { type: primaryWeapon, minimumRarity: Math.random() < 0.22 ? "rare" : "common" },
+      { type: ammoPickupForWeapon(primaryWeapon) },
+      { type: randomAmmoPickup() },
+      { type: randomAmmoPickup() },
+      { type: randomAmmoPickup() },
+      { type: randomMaterialType(), amount: pick([10, 20, 20, 30]) },
+      { type: randomMaterialType(), amount: pick([10, 10, 20]) },
+    ];
+
+    if (Math.random() < 0.65) drops.push({ type: pick(["shield", "medkit", "smoke_grenade", "frag_grenade"]) });
+    if (Math.random() < 0.08) drops.push({ type: "smoke_grenade" });
+    if (Math.random() < 0.1) drops.push({ type: "frag_grenade" });
+    if (game && game.mode === "extraction") {
+      if (Math.random() < 0.72) drops.push({ type: randomValuableType() });
+      if (Math.random() < 0.24) drops.push({ type: randomBackpackType() });
+      if (Math.random() < 0.28) drops.push({ type: randomArmorType() });
+    }
+    if (Math.random() < 0.28) {
+      const bonusWeapon = randomWeaponType();
+      drops.push({ type: bonusWeapon, minimumRarity: "uncommon" });
+      drops.push({ type: ammoPickupForWeapon(bonusWeapon) });
+    }
+    if (eventActive("double_loot")) {
+      drops = drops.concat(drops.map((drop) => ({ ...drop })));
+    }
   }
 
   for (let i = 0; i < drops.length; i += 1) {
@@ -2576,6 +2866,8 @@ function update(dt) {
   updatePlayer(dt);
   updateBots(dt);
   updateLaunchPads(dt);
+  updateAirdrops(dt);
+  updateMatchEvent(dt);
   updateRevives(dt);
   updateChests(dt);
   updateBullets(dt);
@@ -2829,9 +3121,11 @@ function updateBots(dt) {
     const beforeY = bot.y;
 
     bot.aiTimer -= dt;
+    const p = bot.personality || NEUTRAL_PERSONALITY;
+    updateNemesisBehavior(bot, dt);
     const downedAlly = nearestDownedAlly(bot, 920);
     const reviveThreat = downedAlly ? findNearestOpponent(downedAlly, 560) : null;
-    const defensiveTarget = bot.lastAttacker && bot.lastAttacker.alive && !bot.lastAttacker.downed && bot.aggroTimer > 0 && distance(bot, bot.lastAttacker) < 920
+    const defensiveTarget = bot.lastAttacker && bot.lastAttacker.alive && !bot.lastAttacker.downed && bot.aggroTimer > 0 && distance(bot, bot.lastAttacker) < 920 * p.aggro
       ? bot.lastAttacker
       : null;
     const assistTarget = teamAssistTarget(bot);
@@ -2846,10 +3140,11 @@ function updateBots(dt) {
     if (downedAlly && assignedReviver === bot && !shouldReviveAlly && reviveThreat) {
       maybeBotBuildReviveCover(bot, downedAlly, reviveThreat);
     }
-    const canHunt = botCombatReady(bot) && game.elapsed > BOT_LOOT_PHASE_TIME;
+    const canHunt = botCombatReady(bot) && game.elapsed > BOT_LOOT_PHASE_TIME * p.lootPhase;
+    const huntRange = eventActive("fog") ? FOG_BOT_RANGE : 880 * p.hunt;
     const target = bot.unstuckTimer > 0
       ? null
-      : (shouldReviveAlly ? null : defensiveTarget || closeThreat || rescueThreat || assistTarget || (canHunt ? findNearestOpponent(bot, 880) : null));
+      : (shouldReviveAlly ? null : defensiveTarget || closeThreat || rescueThreat || assistTarget || (canHunt ? findNearestOpponent(bot, huntRange) : null));
     if (closeThreat) {
       bot.lastAttacker = closeThreat;
       bot.aggroTimer = Math.max(bot.aggroTimer, 2.4);
@@ -2879,9 +3174,19 @@ function updateBots(dt) {
       setBotGoal(bot, `fight:${target.id}`, { x: bot.wanderX, y: bot.wanderY });
     } else if (!target && bot.aiTimer <= 0) {
       bot.aiTimer = rand(0.9, 1.8);
-      const chest = nearestChest(bot, botCombatReady(bot) ? 520 : 980);
-      const loot = nearestPriorityPickup(bot, botCombatReady(bot) ? 560 : 920);
-      if (!botCombatReady(bot) && loot && (!chest || distance(bot, loot) < distance(bot, chest) + 220)) {
+      const airdropChest = nearestAirdropChest(bot, 1600);
+      const chest = airdropChest || nearestChest(bot, botCombatReady(bot) ? 520 : 980);
+      const loot = nearestPriorityPickup(bot, (botCombatReady(bot) ? 560 : 920) * (p.lootRange || 1));
+      const stealthSpot = p.stealth ? nearestStealthSpot(bot, 700) : null;
+      if (stealthSpot && !nearestAirdropChest(bot, 500) && Math.random() < 0.6) {
+        bot.wanderX = stealthSpot.x + rand(-60, 60);
+        bot.wanderY = stealthSpot.y + rand(-60, 60);
+        setBotGoal(bot, `roam:${Math.round(bot.wanderX)}:${Math.round(bot.wanderY)}`, { x: bot.wanderX, y: bot.wanderY });
+      } else if (airdropChest) {
+        bot.wanderX = airdropChest.x;
+        bot.wanderY = airdropChest.y;
+        setBotGoal(bot, `chest:${airdropChest.id}`, airdropChest);
+      } else if (!botCombatReady(bot) && loot && (!chest || distance(bot, loot) < distance(bot, chest) + 220)) {
         bot.wanderX = loot.x;
         bot.wanderY = loot.y;
         setBotGoal(bot, `pickup:${loot.id}`, loot);
@@ -2917,7 +3222,7 @@ function updateBots(dt) {
     } else if (target) {
       bot.aim = angleTo(bot, target) + rand(-0.04, 0.04);
       const targetDistance = distance(bot, target);
-      const preferredDistance = weapon.melee ? 46 : 280;
+      const preferredDistance = (weapon.melee ? 46 : 280) * p.engage;
       const attackDistance = weapon.melee ? weapon.range + 12 : 720;
       const canSeeTarget = hasLineOfSight(bot, target);
       pathDestination = target;
@@ -2928,7 +3233,7 @@ function updateBots(dt) {
         moveAngle = targetDistance < 330 ? angleTo(target, bot) : moveAngle;
       } else if (targetDistance > preferredDistance) {
         moveAngle = angleTo(bot, target);
-      } else if (!weapon.melee && targetDistance < 160) {
+      } else if (!weapon.melee && targetDistance < 160 * p.engage) {
         moveAngle = angleTo(target, bot);
       }
 
@@ -3020,8 +3325,9 @@ function maybeBotDash(bot, moveAngle, destination, target, weapon) {
 
   if (findPickupUnderFighter(bot)) return;
 
+  const dashBias = (bot.personality || NEUTRAL_PERSONALITY).dash;
   const bulletThreat = incomingBulletThreatInfo(bot);
-  if (bulletThreat && Math.random() < 0.5) {
+  if (bulletThreat && Math.random() < Math.min(0.95, 0.5 * dashBias)) {
     const bulletAngle = Math.atan2(bulletThreat.bullet.vy, bulletThreat.bullet.vx);
     const preferredSide = Math.sign(angleDifference(moveAngle, bulletAngle)) || pick([-1, 1]);
     const dodgeAngles = [
@@ -3045,10 +3351,10 @@ function maybeBotDash(bot, moveAngle, destination, target, weapon) {
   if (!target || weapon.melee) return;
 
   const targetDistance = distance(bot, target);
-  if (targetDistance < 170 && Math.random() < 0.55) {
+  if (targetDistance < 170 && Math.random() < Math.min(0.95, 0.55 * dashBias)) {
     const awayAngle = angleTo(target, bot) + rand(-0.35, 0.35);
     if (pathIsClear(bot, awayAngle, 145)) startDash(bot, Math.cos(awayAngle), Math.sin(awayAngle));
-  } else if (targetDistance > 500 && targetDistance < 820 && Math.random() < 0.25 && pathIsClear(bot, moveAngle, 155)) {
+  } else if (targetDistance > 500 && targetDistance < 820 && Math.random() < Math.min(0.95, 0.25 * dashBias) && pathIsClear(bot, moveAngle, 155)) {
     startDash(bot, Math.cos(moveAngle), Math.sin(moveAngle));
   }
 }
@@ -3105,8 +3411,9 @@ function botShouldReviveAlly(bot, target, nearbyThreat = null, directThreat = nu
   const hasProtection = reviveHasProtection(bot, target, threat);
   if (threatToDowned < 150 || threatToBot < 130) return hasProtection && threatToBot > 105;
 
-  if (!hasProtection && threatToDowned < REVIVE_THREAT_SAFE_DISTANCE) return false;
-  if (!hasProtection && threatToBot < REVIVE_THREAT_SAFE_DISTANCE * 0.72) return false;
+  const reviveSafeDistance = REVIVE_THREAT_SAFE_DISTANCE * (bot.personality && bot.personality.reviveBias ? 0.66 : 1);
+  if (!hasProtection && threatToDowned < reviveSafeDistance) return false;
+  if (!hasProtection && threatToBot < reviveSafeDistance * 0.72) return false;
 
   return true;
 }
@@ -3327,7 +3634,7 @@ function maybeBotBuild(bot, target, targetDistance, canSeeTarget, defensiveTarge
   bot.selectedMaterial = material;
   bot.aim = angleTo(bot, target);
   if (tryBuildWall(bot, { quiet: true, preferStrongest: true })) {
-    bot.buildCooldown = rand(3.4, 6.8);
+    bot.buildCooldown = rand(3.4, 6.8) / ((bot.personality || NEUTRAL_PERSONALITY).build || 1);
     bot.path = [];
     bot.aiTimer = Math.min(bot.aiTimer, 0.2);
   } else {
@@ -3562,11 +3869,14 @@ function botWorstWeaponSlot(bot) {
   return worst;
 }
 
-function botWeaponSituationScore(item, targetDistance) {
+function botWeaponSituationScore(item, targetDistance, bot = null) {
   if (!item || item.kind !== "weapon") return -Infinity;
   if (item.type === "pickaxe") return targetDistance < 70 ? 18 : -80;
 
   let score = weaponScore(item.type, item.rarity);
+  if (bot && bot.personality && bot.personality.weaponBias) {
+    score += bot.personality.weaponBias[item.type] || 0;
+  }
   if (targetDistance < 120) {
     if (item.type === "shotgun") score += 95;
     if (item.type === "smg") score += 42;
@@ -3602,10 +3912,10 @@ function switchBotSlot(bot, slot) {
 function botSelectWeapon(bot, target = null) {
   const targetDistance = target ? distance(bot, target) : 340;
   let bestSlot = 0;
-  let bestScore = botWeaponSituationScore(bot.hotbar[0], targetDistance);
+  let bestScore = botWeaponSituationScore(bot.hotbar[0], targetDistance, bot);
 
   for (const { item, slot } of botWeaponSlots(bot)) {
-    const score = botWeaponSituationScore(item, targetDistance);
+    const score = botWeaponSituationScore(item, targetDistance, bot);
     if (score > bestScore) {
       bestScore = score;
       bestSlot = slot;
@@ -3744,6 +4054,38 @@ function nearestChest(fighter, range) {
     if (chest.opened) continue;
     if (botIgnoresGoal(fighter, "chest", chest.id)) continue;
     if (!fighter.isPlayer && !canSeeByLight(fighter, chest, { range: NIGHT_VIEW_RANGE, requireLineOfSight: true })) continue;
+    const d = distance(fighter, chest);
+    if (d < bestDistance) {
+      best = chest;
+      bestDistance = d;
+    }
+  }
+  return best;
+}
+
+function nearestStealthSpot(fighter, range = 700) {
+  if (!game.mapFeatures || !game.mapFeatures.stealthZones) return null;
+  let best = null;
+  let bestDistance = range;
+  for (const zone of game.mapFeatures.stealthZones) {
+    const center = zone.type === "field"
+      ? { x: zone.x + zone.w / 2, y: zone.y + zone.h / 2 }
+      : { x: zone.x, y: zone.y };
+    const d = distance(fighter, center);
+    if (d < bestDistance) {
+      best = center;
+      bestDistance = d;
+    }
+  }
+  return best;
+}
+
+function nearestAirdropChest(fighter, range = 1600) {
+  let best = null;
+  let bestDistance = range;
+  for (const chest of game.chests) {
+    if (!chest.airdrop || chest.opened) continue;
+    if (botIgnoresGoal(fighter, "chest", chest.id)) continue;
     const d = distance(fighter, chest);
     if (d < bestDistance) {
       best = chest;
@@ -4472,16 +4814,89 @@ function eliminateFighter(fighter, source, storm = false) {
 
   if (source && source.alive) {
     source.kills += 1;
-    addFeed(`${source.name} a elimine ${fighter.name}`);
+    if (source.isNemesis) addFeed(`♛ ${source.name} a elimine ${fighter.name}`);
+    else addFeed(`${source.name} a elimine ${fighter.name}`);
   } else if (storm) {
     addFeed(`${fighter.name} a ete pris par la zone`);
   }
+
+  if (fighter.isNemesis) resolveNemesis(fighter, source);
+  if (fighter.isPlayer && source && !source.isPlayer && !source.isTeammate) promoteNemesis(source);
 
   wipeDownedTeamIfNeeded(fighter.teamId);
 
   if (fighter.isPlayer) {
     endGame(false);
   }
+}
+
+function promoteNemesis(source) {
+  if (profile.nemesis) {
+    if (source.isNemesis) {
+      profile.nemesis.killsOnPlayer = Math.min(3, profile.nemesis.killsOnPlayer + 1);
+      announce(`♛ ${source.name} te domine (${profile.nemesis.killsOnPlayer})`, "#ff5a5a");
+    }
+    return;
+  }
+  profile.nemesis = {
+    name: source.name,
+    archetype: source.archetype || "rusher",
+    killsOnPlayer: 1,
+    encounters: 0,
+  };
+  announce(`♛ ${source.name} devient ta nemesis...`, "#ff5a5a");
+}
+
+function resolveNemesis(fighter, source) {
+  if (!profile.nemesis) return;
+  if (source && (source.isPlayer || source.isTeammate)) {
+    const bounty = 120 + 60 * profile.nemesis.killsOnPlayer;
+    profile.credits += bounty;
+    profile.nemesisDefeated += 1;
+    profile.nemesis = null;
+    saveData();
+    announce(`♛ Nemesis vaincue ! +${bounty} credits`, "#f4cf67");
+    showToast(`Nemesis vaincue : +${bounty} credits`);
+  } else {
+    addFeed(`♛ ${fighter.name} est tombee... elle reviendra`);
+  }
+}
+
+function applyNemesisToBot(bot) {
+  const nemesis = profile.nemesis;
+  if (!nemesis) return;
+  bot.name = nemesis.name;
+  bot.isNemesis = true;
+  bot.archetype = BOT_ARCHETYPES[nemesis.archetype] ? nemesis.archetype : "rusher";
+  bot.personality = BOT_ARCHETYPES[bot.archetype];
+  bot.maxHealth = 100 + 8 * nemesis.killsOnPlayer;
+  bot.health = bot.maxHealth;
+  bot.shield = Math.min(bot.maxShield, 40 + 5 * nemesis.killsOnPlayer);
+  bot.speed *= 1.05;
+  const weaponType = NEMESIS_ARCHETYPE_WEAPONS[bot.archetype] || "assault_rifle";
+  const weaponItem = makeWeaponItem(weaponType, null, nemesis.killsOnPlayer >= 2 ? "rare" : "uncommon");
+  const emptySlot = bot.hotbar.findIndex((item) => !item);
+  if (emptySlot !== -1) bot.hotbar[emptySlot] = weaponItem;
+  nemesis.encounters += 1;
+  saveData();
+  announce(`♛ Ta nemesis ${nemesis.name} est dans la partie`, "#ff5a5a");
+}
+
+function updateNemesisBehavior(bot, dt) {
+  if (!bot.isNemesis || !game.player.alive || bot.downed) return;
+  bot.nemesisHuntTimer = Math.max(0, (bot.nemesisHuntTimer || 0) - dt);
+  const playerDistance = distance(bot, game.player);
+  if (!bot.nemesisAnnounced && playerDistance < 700) {
+    bot.nemesisAnnounced = true;
+    announce(`♛ ${bot.name} te cherche...`, "#ff5a5a");
+  }
+  if (game.elapsed < BOT_LOOT_PHASE_TIME * 0.6) return;
+  if (bot.nemesisHuntTimer > 0 || playerDistance < 900) return;
+  bot.nemesisHuntTimer = 15;
+  bot.wanderX = clamp(game.player.x + rand(-500, 500), 60, WORLD.width - 60);
+  bot.wanderY = clamp(game.player.y + rand(-500, 500), 60, WORLD.height - 60);
+  setBotGoal(bot, `roam:${Math.round(bot.wanderX)}:${Math.round(bot.wanderY)}`, { x: bot.wanderX, y: bot.wanderY });
+  bot.aiTimer = Math.max(bot.aiTimer, 4);
 }
 
 function wipeDownedTeamIfNeeded(teamId) {
@@ -4514,6 +4929,11 @@ function dropLoot(fighter) {
   if (Math.random() < 0.2) drops.push("medkit");
   if (Math.random() < 0.18) drops.push("smoke_grenade");
   if (Math.random() < 0.12) drops.push("frag_grenade");
+  if (eventActive("double_loot")) {
+    if (Math.random() < 0.5) drops.push("shield");
+    if (Math.random() < 0.5) drops.push("medkit");
+    drops.push({ kind: "ammo", type: randomAmmoPickup() });
+  }
 
   for (const drop of drops) {
     const angle = rand(0, TAU);
@@ -5165,7 +5585,7 @@ function updateZone(dt) {
 
   if (zone.mode === "revealing" && zone.timer <= 0) {
     zone.mode = "waiting";
-    zone.timer = zone.wait;
+    zone.timer = eventActive("fast_zone") ? zone.wait * 0.5 : zone.wait;
     addFeed("La zone est active");
     sfxZoneWarn();
     return;
@@ -5173,7 +5593,7 @@ function updateZone(dt) {
 
   if (zone.mode === "waiting" && zone.timer <= 0) {
     zone.mode = "shrinking";
-    zone.timer = zone.shrink;
+    zone.timer = eventActive("fast_zone") ? zone.shrink * 0.5 : zone.shrink;
     sfxZoneWarn();
     zone.startX = zone.x;
     zone.startY = zone.y;
@@ -5196,6 +5616,7 @@ function updateZone(dt) {
     if (zone.timer <= 0) {
       zone.mode = "waiting";
       zone.timer = Math.max(9, zone.wait - zone.phase * 2);
+      if (eventActive("fast_zone")) zone.timer *= 0.5;
       zone.phase += 1;
       zone.damage += 1.8;
       addFeed(`Zone ${zone.phase}: deplacement imminent`);
@@ -5564,11 +5985,14 @@ function updateHud() {
       ? `Recharge ${Math.ceil(player.reload * 10) / 10}s`
       : `${weapon.label} ${getMagazine(player)}/${getAmmoCount(player, weapon.ammoType)} ${ammo.short}`;
   }
-  ui.zoneTimer.textContent = game.zone.mode === "hidden"
+  const eventSuffix = game.matchEvent && game.matchEvent.timer > 0
+    ? ` | ${game.matchEvent.label} ${formatTime(game.matchEvent.timer)}`
+    : "";
+  ui.zoneTimer.textContent = (game.zone.mode === "hidden"
     ? game.mode === "extraction"
       ? `Sac ${player.extractionBag.length}/${player.backpack.capacity}${player.exfilTimer > 0 ? ` - Exfil ${Math.ceil(EXTRACTION_EXFIL_TIME - player.exfilTimer)}s` : ""}`
       : `Zone cachee ${formatTime(game.zone.timer)}`
-    : `${game.zone.mode === "shrinking" ? "Zone bouge" : game.zone.mode === "revealing" ? "Zone apparait" : "Zone"} ${formatTime(game.zone.timer)}`;
+    : `${game.zone.mode === "shrinking" ? "Zone bouge" : game.zone.mode === "revealing" ? "Zone apparait" : "Zone"} ${formatTime(game.zone.timer)}`) + eventSuffix;
   ui.materials.innerHTML = MATERIAL_ORDER.map((material) => {
     const mat = MATERIALS[material];
     const active = material === player.selectedMaterial ? " active" : "";
@@ -6016,14 +6440,17 @@ function render() {
   drawNightLighting();
   drawSmoke();
   drawChests();
+  drawAirdrops();
   drawPickups();
   drawBuildPreview();
+  drawMeteors();
   drawBullets();
   drawFighters();
   drawSmoke(true);
   drawParticles();
   drawDamageNumbers();
   ctx.restore();
+  drawFog();
   drawScreenFx();
   drawTeammateIndicators();
 }
@@ -7341,6 +7768,22 @@ function drawFighter(fighter) {
     ctx.globalAlpha = baseAlpha;
   }
 
+  if (fighter.isNemesis) {
+    const baseAlpha = ctx.globalAlpha;
+    ctx.globalAlpha = baseAlpha * (0.7 + Math.sin((game.elapsed || 0) * 4) * 0.3);
+    ctx.strokeStyle = "#ff5a5a";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, 0, fighter.radius + 5, 0, TAU);
+    ctx.stroke();
+    ctx.strokeStyle = "#f4cf67";
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(0, 0, fighter.radius + 8, 0, TAU);
+    ctx.stroke();
+    ctx.globalAlpha = baseAlpha;
+  }
+
   if (fighter.isPlayer && fighter.bloom > 0.006) {
     const baseAlpha = ctx.globalAlpha;
     ctx.globalAlpha = baseAlpha * 0.34;
@@ -7364,14 +7807,14 @@ function drawFighter(fighter) {
 }
 
 function drawFighterName(fighter) {
-  const label = fighter.isPlayer ? "You" : fighter.isTeammate ? `+ ${fighter.name}` : fighter.name;
+  const label = fighter.isPlayer ? "You" : fighter.isTeammate ? `+ ${fighter.name}` : fighter.isNemesis ? `♛ ${fighter.name}` : fighter.name;
   ctx.save();
   ctx.font = "900 16px Segoe UI, Inter, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "bottom";
   ctx.lineWidth = 5;
   ctx.strokeStyle = IO_THEME.ink;
-  ctx.fillStyle = fighter.downed ? "#ffb3b8" : fighter.isTeammate ? "#bffdf3" : IO_THEME.white || "#fff8df";
+  ctx.fillStyle = fighter.downed ? "#ffb3b8" : fighter.isNemesis ? "#ff6b6b" : fighter.isTeammate ? "#bffdf3" : IO_THEME.white || "#fff8df";
   ctx.strokeText(label, fighter.x, fighter.y - fighter.radius - 25);
   ctx.fillText(label, fighter.x, fighter.y - fighter.radius - 25);
   ctx.restore();
@@ -7536,6 +7979,23 @@ function drawMinimap() {
     mini.fillRect(obstacle.x * sx, obstacle.y * sy, Math.max(1, obstacle.w * sx), Math.max(1, obstacle.h * sy));
   }
 
+  const airdropMarkers = [
+    ...game.airdrops,
+    ...game.chests.filter((chest) => chest.airdrop && !chest.opened),
+  ];
+  if (airdropMarkers.length) {
+    const pulse = 2.5 + Math.sin((game.elapsed || 0) * 6) * 1.5;
+    for (const marker of airdropMarkers) {
+      mini.fillStyle = "#ff8a5c";
+      mini.fillRect(marker.x * sx - 2.5, marker.y * sy - 2.5, 5, 5);
+      mini.strokeStyle = "#ff8a5c";
+      mini.lineWidth = 1;
+      mini.beginPath();
+      mini.arc(marker.x * sx, marker.y * sy, 4 + pulse, 0, TAU);
+      mini.stroke();
+    }
+  }
+
   if (game.launchPads) {
     mini.fillStyle = "#ffd45e";
     for (const pad of game.launchPads) {
@@ -7570,6 +8030,15 @@ function drawMinimap() {
       mini.arc(zone.x * sx, zone.y * sy, Math.max(3, zone.radius * sx), 0, TAU);
       mini.stroke();
     }
+  }
+
+  const nemesisBot = aliveFighters().find((fighter) => fighter.isNemesis);
+  if (nemesisBot && distance(nemesisBot, game.player) < 1000) {
+    const pulse = 3 + Math.sin((game.elapsed || 0) * 6) * 1.4;
+    mini.fillStyle = "#ff5a5a";
+    mini.beginPath();
+    mini.arc(nemesisBot.x * sx, nemesisBot.y * sy, pulse, 0, TAU);
+    mini.fill();
   }
 
   for (const fighter of aliveFighters().filter((item) => item.isPlayer || item.isTeammate)) {
