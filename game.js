@@ -212,7 +212,19 @@ const CONSUMABLES = {
   shield: { label: "Bouclier", color: "#4aa7ff", icon: "SHD", amount: 36, pickupTime: 3, useTime: 2.2 },
   medkit: { label: "MedKIT", color: "#ff6b6b", icon: "MED", amount: 42, pickupTime: 3, useTime: 2.8 },
   smoke_grenade: { label: "Fumigene", color: "#cfd6d3", icon: "SMK", pickupTime: 1.5, useTime: 0.15, throwable: true },
+  frag_grenade: { label: "Grenade", color: "#ff8a5c", icon: "FRG", pickupTime: 1.5, useTime: 0.15, throwable: true },
 };
+
+const FRAG_FUSE_TIME = 0.9;
+const FRAG_RADIUS = 150;
+const FRAG_DAMAGE = 80;
+const FRAG_OBSTACLE_DAMAGE = 170;
+const FRAG_THROW_DISTANCE = 340;
+
+const LAUNCH_PAD_RADIUS = 46;
+const LAUNCH_SPEED = 920;
+const LAUNCH_DURATION = 0.85;
+const LAUNCH_REARM = 1;
 
 const WEAPONS = {
   pickaxe: {
@@ -238,6 +250,9 @@ const WEAPONS = {
     pellets: 1,
     mag: 12,
     reload: 0.9,
+    bloomPerShot: 0.012,
+    bloomMax: 0.055,
+    bloomRecovery: 0.14,
   },
   smg: {
     label: "Mitraillette",
@@ -251,6 +266,9 @@ const WEAPONS = {
     pellets: 1,
     mag: 30,
     reload: 1.3,
+    bloomPerShot: 0.013,
+    bloomMax: 0.15,
+    bloomRecovery: 0.22,
   },
   shotgun: {
     label: "Fusil a pompe",
@@ -264,6 +282,9 @@ const WEAPONS = {
     pellets: 9,
     mag: 5,
     reload: 1.5,
+    bloomPerShot: 0.03,
+    bloomMax: 0.1,
+    bloomRecovery: 0.2,
   },
   assault_rifle: {
     label: "Fusil d'assaut",
@@ -277,6 +298,9 @@ const WEAPONS = {
     pellets: 1,
     mag: 20,
     reload: 1.15,
+    bloomPerShot: 0.017,
+    bloomMax: 0.11,
+    bloomRecovery: 0.16,
   },
   sniper: {
     label: "Sniper",
@@ -290,6 +314,9 @@ const WEAPONS = {
     pellets: 1,
     mag: 5,
     reload: 1.75,
+    bloomPerShot: 0.05,
+    bloomMax: 0.05,
+    bloomRecovery: 0.25,
   },
 };
 
@@ -1239,7 +1266,7 @@ function canPlaceBuildWall(player, rect) {
 }
 
 function tryBuildWall(player, options = {}) {
-  if (!game || game.state !== "playing" || !player.alive) return false;
+  if (!game || game.state !== "playing" || !player.alive || player.launchTime > 0) return false;
   if ((player.materials[player.selectedMaterial] ?? 0) < BUILD_COST) {
     const fallbackMaterial = options.preferStrongest ? bestBuildMaterial(player) : firstAffordableBuildMaterial(player);
     if (fallbackMaterial) player.selectedMaterial = fallbackMaterial;
@@ -1308,6 +1335,7 @@ function switchHotbarSlot(index) {
   player.reload = 0;
   player.pendingReload = false;
   player.useHold = null;
+  player.bloom = 0;
   syncEquippedFromHotbar(player);
   updateHud();
 }
@@ -1412,7 +1440,98 @@ function makeFighter(name, x, y, isPlayer = false, options = {}) {
     swingTimer: 0,
     swingDuration: 0,
     hitFlash: 0,
+    bloom: 0,
+    fragCooldown: rand(2, 6),
+    launchTime: 0,
+    launchRearm: 0,
+    launchX: 0,
+    launchY: 0,
   };
+}
+
+function makeLaunchPads(obstacles, features) {
+  const pads = [];
+  const spots = [];
+  for (const zone of features.zones || []) {
+    spots.push({
+      x: zone.x + zone.w / 2 + rand(-zone.w, zone.w) * 0.4,
+      y: zone.y + zone.h / 2 + rand(-zone.h, zone.h) * 0.4,
+    });
+  }
+  for (let i = 0; i < 3; i += 1) {
+    spots.push({
+      x: WORLD.width / 2 + rand(-1500, 1500),
+      y: WORLD.height / 2 + rand(-1500, 1500),
+    });
+  }
+  for (const spot of spots) {
+    const point = findSafePointAround(spot.x, spot.y, LAUNCH_PAD_RADIUS + 12, obstacles, features, 44);
+    if (point) pads.push({ id: makeId("pad"), x: point.x, y: point.y, pulse: rand(0, TAU) });
+  }
+  return pads;
+}
+
+function updateLaunchPads(dt) {
+  if (!game.launchPads || !game.launchPads.length) return;
+  for (const pad of game.launchPads) {
+    pad.pulse += dt * 3;
+  }
+  for (const fighter of standingFighters()) {
+    if (fighter.launchTime > 0 || (fighter.launchRearm || 0) > 0) continue;
+    for (const pad of game.launchPads) {
+      if (Math.hypot(fighter.x - pad.x, fighter.y - pad.y) > LAUNCH_PAD_RADIUS) continue;
+      let dirX = fighter.moveX;
+      let dirY = fighter.moveY;
+      if (Math.hypot(dirX, dirY) < 0.2) {
+        dirX = Math.cos(fighter.aim);
+        dirY = Math.sin(fighter.aim);
+      }
+      const length = Math.hypot(dirX, dirY) || 1;
+      fighter.launchX = dirX / length;
+      fighter.launchY = dirY / length;
+      fighter.launchTime = LAUNCH_DURATION;
+      fighter.launchRearm = LAUNCH_REARM + LAUNCH_DURATION;
+      fighter.dashTime = 0;
+      fighter.pickupHold = null;
+      fighter.useHold = null;
+      spawnHit(pad.x, pad.y, "#ffd45e", 14);
+      sfxDash(pad.x, pad.y, fighter.isPlayer);
+      break;
+    }
+  }
+}
+
+function drawLaunchPads() {
+  if (!game.launchPads) return;
+  for (const pad of game.launchPads) {
+    ctx.save();
+    ctx.translate(pad.x, pad.y);
+    ctx.fillStyle = "rgba(255, 212, 94, 0.24)";
+    ctx.strokeStyle = "#ffd45e";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(0, 0, LAUNCH_PAD_RADIUS, 0, TAU);
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = IO_THEME.ink;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, LAUNCH_PAD_RADIUS + 3, 0, TAU);
+    ctx.stroke();
+    const bounce = Math.sin(pad.pulse) * 4;
+    ctx.fillStyle = "#fff8df";
+    for (let i = 0; i < 2; i += 1) {
+      const offset = -10 + i * 14 + bounce;
+      ctx.beginPath();
+      ctx.moveTo(-13, offset + 7);
+      ctx.lineTo(0, offset - 5);
+      ctx.lineTo(13, offset + 7);
+      ctx.lineTo(0, offset + 2);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
 }
 
 function makeZone() {
@@ -1524,12 +1643,14 @@ function newGame(mode = lastGameMode, teamSize = 1) {
     smokeClouds: [],
     grass: makeGrass(),
     groundPatches: makeGroundPatches(),
+    launchPads: makeLaunchPads(obstacles, mapFeatures),
     zone,
     teamSize: selectedTeamSize,
     totalPlayers: totalCount,
     extractionZones: selectedMode === "extraction" ? makeExtractionZones() : [],
     placement: totalCount,
     feed: [],
+    announcements: [],
     elapsed: 0,
     matchStats: {
       shotsFired: 0,
@@ -2168,6 +2289,7 @@ function makePickups(obstacles, count, features) {
     "shield",
     "medkit",
     "smoke_grenade",
+    "frag_grenade",
     "pistol",
     "smg",
     "shotgun",
@@ -2326,8 +2448,9 @@ function openChest(chest, opener) {
     { type: randomMaterialType(), amount: pick([10, 10, 20]) },
   ];
 
-  if (Math.random() < 0.65) drops.push({ type: pick(["shield", "medkit", "smoke_grenade"]) });
+  if (Math.random() < 0.65) drops.push({ type: pick(["shield", "medkit", "smoke_grenade", "frag_grenade"]) });
   if (Math.random() < 0.08) drops.push({ type: "smoke_grenade" });
+  if (Math.random() < 0.1) drops.push({ type: "frag_grenade" });
   if (game && game.mode === "extraction") {
     if (Math.random() < 0.72) drops.push({ type: randomValuableType() });
     if (Math.random() < 0.24) drops.push({ type: randomBackpackType() });
@@ -2410,6 +2533,40 @@ function addFeed(text) {
   game.feed = game.feed.slice(0, 5);
 }
 
+function announce(text, color = "#f4cf67") {
+  if (!game) return;
+  addFeed(text);
+  game.announcements.push({ text, color, life: 4 });
+  if (game.announcements.length > 3) game.announcements.shift();
+}
+
+function explodeAt(x, y, radius, damage, source, options = {}) {
+  const origin = { x, y };
+  for (const fighter of aliveFighters()) {
+    const d = distance(origin, fighter);
+    if (d > radius + fighter.radius) continue;
+    if (!hasLineOfSight(origin, fighter)) continue;
+    const falloff = 1 - clamp(d / radius, 0, 1);
+    damageFighter(fighter, damage * (0.3 + 0.7 * falloff), source);
+  }
+  for (const obstacle of nearbyObstacles(x, y, radius)) {
+    if (!obstacle.destructible && obstacle.type !== "built_wall") continue;
+    const center = obstacleCenter(obstacle);
+    const d = Math.hypot(center.x - x, center.y - y);
+    if (d > radius + obstacleHitRadius(obstacle)) continue;
+    const falloff = 1 - clamp(d / (radius + obstacleHitRadius(obstacle)), 0, 1);
+    damageObstacle(obstacle, (options.obstacleDamage ?? damage * 2) * (0.3 + 0.7 * falloff), source);
+  }
+  for (let i = 0; i < 26; i += 1) {
+    spawnParticle(x + rand(-14, 14), y + rand(-14, 14), pick(["#ff8a5c", "#ffd45e", "#8a8f94"]), rand(0.3, 0.7), rand(60, 240));
+  }
+  spawnHit(x, y, "#ff8a5c", 14);
+  sfxExplosion(x, y);
+  if (game.player.alive && Math.hypot(game.player.x - x, game.player.y - y) < 900) {
+    addTrauma(0.3);
+  }
+}
+
 function update(dt) {
   if (!game || game.state !== "playing") return;
 
@@ -2418,6 +2575,7 @@ function update(dt) {
   updateZone(dt);
   updatePlayer(dt);
   updateBots(dt);
+  updateLaunchPads(dt);
   updateRevives(dt);
   updateChests(dt);
   updateBullets(dt);
@@ -2482,7 +2640,7 @@ function updatePlayer(dt) {
   }
   speed *= terrainSpeedMultiplier(player);
 
-  moveFighter(player, moveX * speed * dt, moveY * speed * dt);
+  if (player.launchTime <= 0) moveFighter(player, moveX * speed * dt, moveY * speed * dt);
 
   const stepColor = playerStepColor();
   if (stepColor && (moveX || moveY) && player.dashTime <= 0) {
@@ -2562,7 +2720,7 @@ function playerCanSeeEntity(entity, options = {}) {
 }
 
 function startDash(fighter, x, y) {
-  if (fighter.dashCooldown > 0 || fighter.dashTime > 0) return;
+  if (fighter.dashCooldown > 0 || fighter.dashTime > 0 || fighter.launchTime > 0) return;
   if ((fighter.energy ?? MAX_ENERGY) < DASH_ENERGY_COST) return;
   if (Math.hypot(x, y) < 0.2) {
     x = Math.cos(fighter.aim);
@@ -2583,6 +2741,10 @@ function startDash(fighter, x, y) {
 
 function tickFighter(fighter, dt) {
   fighter.hitFlash = Math.max(0, (fighter.hitFlash || 0) - dt);
+  if (fighter.bloom > 0) {
+    const weapon = getEquippedWeapon(fighter);
+    fighter.bloom = Math.max(0, fighter.bloom - ((weapon && weapon.bloomRecovery) || 0.15) * dt);
+  }
   fighter.cooldown = Math.max(0, fighter.cooldown - dt);
   fighter.reload = Math.max(0, fighter.reload - dt);
   fighter.dashCooldown = Math.max(0, fighter.dashCooldown - dt);
@@ -2592,6 +2754,24 @@ function tickFighter(fighter, dt) {
   }
   fighter.buildCooldown = Math.max(0, fighter.buildCooldown - dt);
   fighter.buildPanicTimer = Math.max(0, fighter.buildPanicTimer - dt);
+  fighter.fragCooldown = Math.max(0, (fighter.fragCooldown || 0) - dt);
+  fighter.launchRearm = Math.max(0, (fighter.launchRearm || 0) - dt);
+  if (fighter.launchTime > 0) {
+    fighter.launchTime = Math.max(0, fighter.launchTime - dt);
+    fighter.x = clamp(fighter.x + fighter.launchX * LAUNCH_SPEED * dt, fighter.radius, WORLD.width - fighter.radius);
+    fighter.y = clamp(fighter.y + fighter.launchY * LAUNCH_SPEED * dt, fighter.radius, WORLD.height - fighter.radius);
+    if (fighter.launchTime === 0) {
+      resolveFighterCollision(fighter);
+      if (circleHitsObstacles(fighter.x, fighter.y, fighter.radius, game.obstacles)) {
+        const safe = findSafePointAround(fighter.x, fighter.y, fighter.radius, game.obstacles, game.mapFeatures, 44);
+        if (safe) {
+          fighter.x = safe.x;
+          fighter.y = safe.y;
+        }
+      }
+      spawnHit(fighter.x, fighter.y, "#ffd45e", 8);
+    }
+  }
   fighter.dashTime = Math.max(0, fighter.dashTime - dt);
   fighter.swingTimer = Math.max(0, fighter.swingTimer - dt);
   fighter.invuln = Math.max(0, fighter.invuln - dt);
@@ -2761,7 +2941,10 @@ function updateBots(dt) {
         tryShoot(bot, bot.aim);
       }
 
-      if (!usingConsumable) maybeBotBuild(bot, target, targetDistance, canSeeTarget, defensiveTarget);
+      if (!usingConsumable) {
+        maybeBotBuild(bot, target, targetDistance, canSeeTarget, defensiveTarget);
+        botMaybeThrowFrag(bot, target, targetDistance, canSeeTarget);
+      }
     } else {
       bot.aim = moveAngle;
     }
@@ -2796,7 +2979,7 @@ function updateBots(dt) {
       spawnParticle(bot.x - bot.dashX * 14, bot.y - bot.dashY * 14, "#ffdf7e", 0.2, 14);
     }
 
-    moveFighter(bot, Math.cos(moveAngle) * speed * dt, Math.sin(moveAngle) * speed * dt);
+    if (bot.launchTime <= 0) moveFighter(bot, Math.cos(moveAngle) * speed * dt, Math.sin(moveAngle) * speed * dt);
     updateBotGoalProgress(bot, pathDestination, target, dt);
     updateBotStuck(bot, beforeX, beforeY, moveAngle, dt);
     updatePickupHold(bot, dt);
@@ -2804,8 +2987,37 @@ function updateBots(dt) {
   }
 }
 
+function botMaybeThrowFrag(bot, target, targetDistance, canSeeTarget) {
+  if ((bot.fragCooldown || 0) > 0 || !target) return;
+  if (targetDistance < 180 || targetDistance > FRAG_THROW_DISTANCE + 80) return;
+  if (!canSeeTarget && targetDistance > 300) return;
+  if (Math.random() > 0.5) return;
+  const fragSlot = botConsumableSlots(bot, "frag_grenade")[0];
+  if (!fragSlot) return;
+  bot.aim = angleTo(bot, target);
+  const savedSlot = bot.activeSlot;
+  bot.activeSlot = fragSlot.slot;
+  throwGrenade(bot, "frag", clamp(targetDistance, 120, FRAG_THROW_DISTANCE));
+  sfxSmokeThrow(bot.x, bot.y);
+  bot.hotbar[fragSlot.slot] = null;
+  bot.activeSlot = savedSlot;
+  syncEquippedFromHotbar(bot);
+  bot.fragCooldown = rand(7, 14);
+}
+
 function maybeBotDash(bot, moveAngle, destination, target, weapon) {
   if (bot.dashCooldown > 0 || bot.dashTime > 0 || bot.pickupHold) return;
+
+  for (const grenade of game.smokeGrenades) {
+    if (grenade.kind !== "frag" || !grenade.armed) continue;
+    if (Math.hypot(bot.x - grenade.x, bot.y - grenade.y) > FRAG_RADIUS + 50) continue;
+    const fleeAngle = angleTo(grenade, bot) + rand(-0.3, 0.3);
+    if (pathIsClear(bot, fleeAngle, 145)) {
+      startDash(bot, Math.cos(fleeAngle), Math.sin(fleeAngle));
+      return;
+    }
+  }
+
   if (findPickupUnderFighter(bot)) return;
 
   const bulletThreat = incomingBulletThreatInfo(bot);
@@ -3383,6 +3595,7 @@ function switchBotSlot(bot, slot) {
   bot.reload = 0;
   bot.pendingReload = false;
   bot.useHold = null;
+  bot.bloom = 0;
   syncEquippedFromHotbar(bot);
 }
 
@@ -3877,7 +4090,7 @@ function terrainSpeedMultiplier(fighter) {
 }
 
 function tryShoot(fighter, baseAngle) {
-  if (!fighter.alive || fighter.cooldown > 0 || fighter.reload > 0) return;
+  if (!fighter.alive || fighter.cooldown > 0 || fighter.reload > 0 || fighter.launchTime > 0) return;
   const weapon = getEquippedWeapon(fighter);
   if (!weapon) return;
   const weaponKey = getEquippedWeaponKey(fighter);
@@ -3899,7 +4112,7 @@ function tryShoot(fighter, baseAngle) {
   if (fighter.isPlayer && game.matchStats) game.matchStats.shotsFired += weapon.pellets;
 
   for (let i = 0; i < weapon.pellets; i += 1) {
-    const spread = getWeaponSpread(weaponKey, rarity);
+    const spread = getWeaponSpread(weaponKey, rarity) + fighter.bloom;
     const angle = baseAngle + rand(-spread, spread);
     const startX = fighter.x + Math.cos(angle) * (fighter.radius + 10);
     const startY = fighter.y + Math.sin(angle) * (fighter.radius + 10);
@@ -3918,6 +4131,8 @@ function tryShoot(fighter, baseAngle) {
       weaponType: weaponKey,
     });
   }
+
+  fighter.bloom = Math.min(weapon.bloomMax ?? 0, fighter.bloom + (weapon.bloomPerShot ?? 0));
 
   spawnMuzzle(fighter.x + Math.cos(baseAngle) * 26, fighter.y + Math.sin(baseAngle) * 26, weapon.color);
   if (fighter.isPlayer) {
@@ -4298,6 +4513,7 @@ function dropLoot(fighter) {
   if (Math.random() < 0.36) drops.push("shield");
   if (Math.random() < 0.2) drops.push("medkit");
   if (Math.random() < 0.18) drops.push("smoke_grenade");
+  if (Math.random() < 0.12) drops.push("frag_grenade");
 
   for (const drop of drops) {
     const angle = rand(0, TAU);
@@ -4714,7 +4930,7 @@ function updateConsumableUse(fighter, dt, actionPressed) {
   const consumable = CONSUMABLES[item.type];
 
   if (consumable.throwable) {
-    throwSmokeGrenade(fighter);
+    throwGrenade(fighter, item.type === "frag_grenade" ? "frag" : "smoke");
     sfxSmokeThrow(fighter.x, fighter.y);
     fighter.hotbar[fighter.activeSlot] = null;
     fighter.useHold = null;
@@ -4758,23 +4974,35 @@ function updatePickups(dt) {
   }
 }
 
-function throwSmokeGrenade(fighter) {
+function throwGrenade(fighter, kind = "smoke", targetDistance = 300) {
   const angle = fighter.aim;
-  const targetDistance = 300;
   game.smokeGrenades.push({
+    kind,
+    owner: fighter,
     x: fighter.x + Math.cos(angle) * (fighter.radius + 14),
     y: fighter.y + Math.sin(angle) * (fighter.radius + 14),
     vx: Math.cos(angle) * 460,
     vy: Math.sin(angle) * 460,
     targetX: clamp(fighter.x + Math.cos(angle) * targetDistance, 40, WORLD.width - 40),
     targetY: clamp(fighter.y + Math.sin(angle) * targetDistance, 40, WORLD.height - 40),
-    life: 0.62,
+    life: 0.62 * (targetDistance / 300),
+    fuse: FRAG_FUSE_TIME,
+    armed: false,
     pulse: 0,
   });
 }
 
 function updateSmoke(dt) {
   for (const grenade of game.smokeGrenades) {
+    if (grenade.armed) {
+      grenade.fuse -= dt;
+      grenade.pulse += dt * 18;
+      if (grenade.fuse <= 0) {
+        explodeAt(grenade.x, grenade.y, FRAG_RADIUS, FRAG_DAMAGE, grenade.owner, { obstacleDamage: FRAG_OBSTACLE_DAMAGE });
+        grenade.done = true;
+      }
+      continue;
+    }
     grenade.x += grenade.vx * dt;
     grenade.y += grenade.vy * dt;
     grenade.vx *= Math.pow(0.12, dt);
@@ -4783,8 +5011,14 @@ function updateSmoke(dt) {
     grenade.pulse += dt * 10;
 
     if (grenade.life <= 0 || Math.hypot(grenade.x - grenade.targetX, grenade.y - grenade.targetY) < 28) {
-      spawnSmokeCloud(grenade.x, grenade.y);
-      grenade.done = true;
+      if (grenade.kind === "frag") {
+        grenade.armed = true;
+        grenade.vx = 0;
+        grenade.vy = 0;
+      } else {
+        spawnSmokeCloud(grenade.x, grenade.y);
+        grenade.done = true;
+      }
     }
   }
   game.smokeGrenades = game.smokeGrenades.filter((grenade) => !grenade.done);
@@ -4824,6 +5058,8 @@ function updateParticles(dt) {
   game.particles = game.particles.filter((particle) => particle.life > 0);
   for (const item of game.feed) item.time -= dt;
   game.feed = game.feed.filter((item) => item.time > 0);
+  for (const item of game.announcements) item.life -= dt;
+  game.announcements = game.announcements.filter((item) => item.life > 0);
   updateDamageNumbers(dt);
 }
 
@@ -5722,6 +5958,23 @@ function drawConsumableHotbarIcon(icon, type) {
     icon.fill();
     icon.rotate(0.35);
     drawWeaponCode(icon, "SMK", color);
+  } else if (type === "frag_grenade") {
+    icon.fillStyle = color;
+    icon.beginPath();
+    icon.arc(0, 3, 16, 0, TAU);
+    icon.fill();
+    icon.stroke();
+    icon.strokeStyle = "rgba(4, 7, 10, 0.5)";
+    icon.lineWidth = 2;
+    icon.beginPath();
+    icon.moveTo(-16, 3);
+    icon.lineTo(16, 3);
+    icon.moveTo(0, -13);
+    icon.lineTo(0, 19);
+    icon.stroke();
+    icon.fillStyle = "#66716e";
+    icon.fillRect(-5, -18, 10, 7);
+    drawWeaponCode(icon, "FRG", color);
   }
 
   icon.restore();
@@ -5757,6 +6010,7 @@ function render() {
   ctx.translate(-view.width / 2, -view.height / 2);
   ctx.translate(-game.camera.x + fx.shakeX, -game.camera.y + fx.shakeY);
   drawWorld();
+  drawLaunchPads();
   if (game.zone.mode !== "hidden") drawZone();
   drawExtractionZones();
   drawNightLighting();
@@ -6766,6 +7020,22 @@ function drawConsumablePickup(type, color) {
     ctx.arc(-2, -2, 4, 0, TAU);
     ctx.fill();
     ctx.restore();
+  } else if (type === "frag_grenade") {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(0, 2, 14, 0, TAU);
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(4, 7, 8, 0.5)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-14, 2);
+    ctx.lineTo(14, 2);
+    ctx.moveTo(0, -12);
+    ctx.lineTo(0, 16);
+    ctx.stroke();
+    ctx.fillStyle = "#6f7976";
+    ctx.fillRect(-4, -16, 8, 6);
   }
 }
 
@@ -6998,6 +7268,23 @@ function drawScreenFx() {
     ctx.globalAlpha = 1;
   }
 
+  if (game.announcements && game.announcements.length) {
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    game.announcements.forEach((item, index) => {
+      const alpha = clamp(item.life / 0.6, 0, 1) * clamp((4 - item.life) * 4, 0, 1);
+      ctx.globalAlpha = alpha;
+      ctx.font = '900 18px "Segoe UI", Inter, sans-serif';
+      const y = view.height * 0.14 + index * 30;
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = IO_THEME.ink;
+      ctx.strokeText(item.text, view.width / 2, y);
+      ctx.fillStyle = item.color;
+      ctx.fillText(item.text, view.width / 2, y);
+    });
+    ctx.globalAlpha = 1;
+  }
+
   if (fx.killConfirm > 0 && fx.killConfirmText) {
     const pop = clamp((1.1 - fx.killConfirm) * 10, 0, 1);
     const alpha = clamp(fx.killConfirm / 0.35, 0, 1);
@@ -7025,10 +7312,12 @@ function drawFighter(fighter) {
   ctx.translate(fighter.x, fighter.y);
   ctx.rotate(fighter.downed ? fighter.aim + Math.PI / 2 : fighter.aim);
 
+  const flying = fighter.launchTime > 0;
   ctx.fillStyle = "rgba(0, 0, 0, 0.22)";
   ctx.beginPath();
-  ctx.ellipse(0, 11, fighter.radius * 0.95, fighter.radius * 0.48, 0, 0, TAU);
+  ctx.ellipse(0, flying ? 30 : 11, fighter.radius * (flying ? 0.7 : 0.95), fighter.radius * (flying ? 0.34 : 0.48), 0, 0, TAU);
   ctx.fill();
+  if (flying) ctx.scale(1.15, 1.15);
 
   if (!fighter.downed) drawHeldItem(fighter);
 
@@ -7049,6 +7338,17 @@ function drawFighter(fighter) {
     if (fighter.downed) ctx.ellipse(0, 0, fighter.radius * 1.12, fighter.radius * 0.62, 0, 0, TAU);
     else ctx.arc(0, 0, fighter.radius, 0, TAU);
     ctx.fill();
+    ctx.globalAlpha = baseAlpha;
+  }
+
+  if (fighter.isPlayer && fighter.bloom > 0.006) {
+    const baseAlpha = ctx.globalAlpha;
+    ctx.globalAlpha = baseAlpha * 0.34;
+    ctx.strokeStyle = "#fff8df";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, fighter.radius + 9 + fighter.bloom * 210, 0, TAU);
+    ctx.stroke();
     ctx.globalAlpha = baseAlpha;
   }
 
@@ -7132,12 +7432,32 @@ function drawSmoke(overlay = false) {
     for (const grenade of game.smokeGrenades) {
       ctx.save();
       ctx.translate(grenade.x, grenade.y);
-      ctx.rotate(grenade.pulse);
-      ctx.fillStyle = "#cfd6d3";
-      ctx.strokeStyle = "rgba(3, 5, 6, 0.78)";
-      ctx.lineWidth = 3;
-      roundRect(-7, -11, 14, 22, 5, "#cfd6d3");
-      ctx.strokeRect(-7, -11, 14, 22);
+      if (grenade.kind === "frag") {
+        const blink = grenade.armed && Math.sin(grenade.pulse) > 0;
+        ctx.fillStyle = blink ? "#ff5a3c" : "#ff8a5c";
+        ctx.strokeStyle = "rgba(3, 5, 6, 0.78)";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(0, 0, 9, 0, TAU);
+        ctx.fill();
+        ctx.stroke();
+        if (grenade.armed) {
+          ctx.globalAlpha = 0.2;
+          ctx.strokeStyle = "#ff5a3c";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(0, 0, FRAG_RADIUS, 0, TAU);
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+        }
+      } else {
+        ctx.rotate(grenade.pulse);
+        ctx.fillStyle = "#cfd6d3";
+        ctx.strokeStyle = "rgba(3, 5, 6, 0.78)";
+        ctx.lineWidth = 3;
+        roundRect(-7, -11, 14, 22, 5, "#cfd6d3");
+        ctx.strokeRect(-7, -11, 14, 22);
+      }
       ctx.restore();
     }
   }
@@ -7214,6 +7534,21 @@ function drawMinimap() {
     if (obstacle.type !== "building" && obstacle.type !== "wall") continue;
     mini.fillStyle = obstacle.type === "building" ? "#747b7b" : "#343a39";
     mini.fillRect(obstacle.x * sx, obstacle.y * sy, Math.max(1, obstacle.w * sx), Math.max(1, obstacle.h * sy));
+  }
+
+  if (game.launchPads) {
+    mini.fillStyle = "#ffd45e";
+    for (const pad of game.launchPads) {
+      const px = pad.x * sx;
+      const py = pad.y * sy;
+      mini.beginPath();
+      mini.moveTo(px, py - 3.4);
+      mini.lineTo(px + 3.4, py);
+      mini.lineTo(px, py + 3.4);
+      mini.lineTo(px - 3.4, py);
+      mini.closePath();
+      mini.fill();
+    }
   }
 
   if (game.zone.mode !== "hidden") {
